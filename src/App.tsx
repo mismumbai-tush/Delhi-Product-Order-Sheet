@@ -11,6 +11,7 @@ import { generateGasCode, defaultGasConfig } from './utils/gasGenerator';
 export default function App() {
   const [activeTab, setActiveTab] = useState<'simulator' | 'code' | 'firebase' | 'advisor' | 'columns' | 'guide'>('simulator');
   const [copied, setCopied] = useState(false);
+  const [isFullWidth, setIsFullWidth] = useState<boolean>(true); // Default to Full Size for Google Sheet experience
 
   const handleCopyCode = () => {
     const code = generateGasCode(defaultGasConfig);
@@ -22,31 +23,43 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      {/* Top Header */}
+      {/* Top Header with Live Connected Google IDs Bar & Full-Size Controls */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onCopyCode={handleCopyCode}
         copied={copied}
+        isFullWidth={isFullWidth}
+        setIsFullWidth={setIsFullWidth}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* Main Content Area - Full Size or Boxed Container */}
+      <main
+        className={`flex-1 w-full mx-auto py-3 transition-all duration-150 ${
+          isFullWidth ? 'px-2 sm:px-4 max-w-[100vw]' : 'max-w-7xl px-4 sm:px-6 lg:px-8'
+        }`}
+      >
         {activeTab === 'firebase' && <FirebaseSyncHub />}
-        {activeTab === 'simulator' && <SpreadsheetSimulator />}
+        {activeTab === 'simulator' && <SpreadsheetSimulator isFullWidth={isFullWidth} setIsFullWidth={setIsFullWidth} />}
         {activeTab === 'code' && <CodeViewer onCopyCode={handleCopyCode} copied={copied} />}
         {activeTab === 'advisor' && <SupabaseAdvisor />}
         {activeTab === 'columns' && <ColumnMapper />}
         {activeTab === 'guide' && <SetupGuide />}
       </main>
 
-      {/* Quiet Footer adhering to Anti-Slop Discipline */}
-      <footer className="border-t border-slate-200 bg-white py-5 mt-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-          <div>
-            <span>GINZA FMS Order Automation &amp; Architecture Studio</span>
-            <span className="mx-2">·</span>
-            <span>Product Order → Product Automation &amp; Closed Orders</span>
+      {/* Quiet Clean Footer */}
+      <footer className="border-t border-slate-200 bg-white py-4 mt-8">
+        <div
+          className={`mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 ${
+            isFullWidth ? 'px-4' : 'max-w-7xl px-4 sm:px-6 lg:px-8'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-700">GINZA FMS Cloud Sheet Engine</span>
+            <span>·</span>
+            <span>Connected: mis.mumbai@ginzalimited.com</span>
+            <span>·</span>
+            <span className="text-emerald-700 font-medium">100k Rows Optimized</span>
           </div>
 
           <div className="flex items-center gap-4">
@@ -66,7 +79,7 @@ export default function App() {
               onClick={() => setActiveTab('simulator')}
               className="hover:text-slate-800 transition-colors"
             >
-              Spreadsheet Preview
+              Spreadsheet Grid
             </button>
             <button
               onClick={() => setActiveTab('code')}
@@ -78,7 +91,7 @@ export default function App() {
               onClick={() => setActiveTab('guide')}
               className="hover:text-slate-800 transition-colors"
             >
-              Installation Steps
+              Vercel / GitHub
             </button>
           </div>
         </div>

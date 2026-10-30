@@ -41,15 +41,29 @@ import {
   Flame,
   ArrowUp,
   ArrowDown,
-  ChevronDown
+  ChevronDown,
+  Upload,
+  Lock,
+  Pin,
+  FileText,
+  Github
 } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v5';
-const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v5';
-const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v5';
-const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v5';
+const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v6';
+const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v6';
+const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v6';
+const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v6';
+const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v6';
 
-export const SpreadsheetSimulator: React.FC = () => {
+interface SpreadsheetSimulatorProps {
+  isFullWidth?: boolean;
+  setIsFullWidth?: (val: boolean) => void;
+}
+
+export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
+  isFullWidth = true,
+  setIsFullWidth
+}) => {
   // Load saved orders from localStorage or fallback to updated real orders
   const [rawResponses, setRawResponses] = useState<ProductOrderRow[]>(() => {
     try {
@@ -86,14 +100,25 @@ export const SpreadsheetSimulator: React.FC = () => {
     // Default: Show core 26 columns + AN, AO, AP (Hide extra optional follow-ups initially for cleaner view)
     const initial: Record<string, boolean> = {};
     fmsColumnMapping.forEach(col => {
-      // By default show A through Z, plus AM (LR), AN (Status), AO (WhatsApp Msg), AP (WhatsApp Link)
       const isExtra = ['AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AQ', 'AR', 'AS'].includes(col.sheetCol);
       initial[col.sheetCol] = !isExtra;
     });
     return initial;
   });
 
-  // Column Dropdown Filter State: Record<colLetter, string[]> (List of selected values)
+  // Freeze Configuration: freezeColumns (0, 1: #, 2: # + PO, 3: # + PO + Name), freezeRows (1: Header, 0: None)
+  const [freezeColumns, setFreezeColumns] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_FREEZE_CONFIG);
+      if (saved) return JSON.parse(saved).cols ?? 2;
+    } catch (e) {}
+    return 2; // Default: Freeze # and Customer PO for easy scrolling
+  });
+
+  const [freezeRows, setFreezeRows] = useState<number>(1);
+  const [showFreezeMenu, setShowFreezeMenu] = useState(false);
+
+  // Column Dropdown Filter State: Record<colLetter, string[]>
   const [colFilters, setColFilters] = useState<Record<string, string[]>>({});
 
   // Active Sorting: { column: string; direction: 'asc' | 'desc' }
@@ -101,10 +126,17 @@ export const SpreadsheetSimulator: React.FC = () => {
 
   // Active popover filter menu
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
-  const [columnSearchText, setColumnSearchText] = useState('');
 
   // Column Visibility Manager modal
   const [showColManager, setShowColManager] = useState(false);
+  const [selectedColsToHide, setSelectedColsToHide] = useState<string[]>([]);
+
+  // Excel / CSV Import Modal
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [pastedDataText, setPastedDataText] = useState('');
+
+  // Vercel / GitHub Deployment Modal
+  const [showVercelGuide, setShowVercelGuide] = useState(false);
 
   // Firebase Live Sync & Historical Upload Modal
   const [showFirebaseModal, setShowFirebaseModal] = useState(false);
@@ -115,9 +147,7 @@ export const SpreadsheetSimulator: React.FC = () => {
     } catch (e) {}
     return 'https://ginza-fms-default-rtdb.firebaseio.com';
   });
-  const [firebaseAuthKey, setFirebaseAuthKey] = useState('');
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [firebaseSyncStatus, setFirebaseSyncStatus] = useState<'idle' | 'uploading' | 'synced' | 'error'>('idle');
 
   // Col AO: Dispatch Status ("Message Sent" vs "Pending")
   const [aoStatuses, setAoStatuses] = useState<Record<string, string>>({
@@ -139,14 +169,6 @@ export const SpreadsheetSimulator: React.FC = () => {
 
   // Status Filter in Toolbar
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Open' | 'In-Progress' | 'Closed'>('ALL');
-
-  // Active cell selection for Formula Bar
-  const [selectedCell, setSelectedCell] = useState<{ col: string; row: number; val: string; formula?: string }>({
-    col: 'AN',
-    row: 8,
-    val: 'Open',
-    formula: 'Data Validation: Dropdown [Open, In-Progress, Closed]'
-  });
 
   // View mode: 'merged' (Customer A-E & N-X Vertically Merged) vs 'unmerged' (Flat row-wise)
   const [viewMode, setViewMode] = useState<'merged' | 'unmerged'>('merged');
@@ -189,6 +211,12 @@ export const SpreadsheetSimulator: React.FC = () => {
     } catch (e) {}
   }, [visibleCols]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_FREEZE_CONFIG, JSON.stringify({ cols: freezeColumns, rows: freezeRows }));
+    } catch (e) {}
+  }, [freezeColumns, freezeRows]);
+
   // Group raw responses into distinct orders
   const groupedOrders: GroupedOrder[] = useMemo(() => {
     const map: Record<string, GroupedOrder> = {};
@@ -225,7 +253,6 @@ export const SpreadsheetSimulator: React.FC = () => {
         };
       }
 
-      // Lookup preserved dispatch quantity for this item
       const itemKey = `${orderKey}___${row.itemName.trim()}___${row.color.trim()}___${row.width.trim()}`;
       const dispatch = dispatchRecords[itemKey] !== undefined ? dispatchRecords[itemKey] : 0;
       const balance = Number((row.qty - dispatch).toFixed(4));
@@ -528,19 +555,84 @@ export const SpreadsheetSimulator: React.FC = () => {
     setTimeout(() => setSyncFeedback(null), 3500);
   };
 
+  // Direct Excel / CSV Paste or File Import Parser
+  const handleParseImportedData = (text: string) => {
+    if (!text.trim()) return;
+
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length === 0) return;
+
+    // Detect delimiter (tab or comma)
+    const delimiter = lines[0].includes('\t') ? '\t' : ',';
+    const newItems: ProductOrderRow[] = [];
+
+    let currentPO = 'IMPORT-PO';
+    let currentName = 'Direct Imported Client';
+    let currentDate = new Date().toLocaleDateString('en-GB');
+
+    lines.forEach((line, index) => {
+      // Skip header if it contains 'timestamp' or 'customer'
+      if (index === 0 && (line.toLowerCase().includes('customer') || line.toLowerCase().includes('timestamp'))) {
+        return;
+      }
+
+      const cols = line.split(delimiter).map(c => c.replace(/^["']|["']$/g, '').trim());
+      if (cols.length < 3) return;
+
+      if (cols[1] && cols[1] !== '') currentPO = cols[1];
+      if (cols[2] && cols[2] !== '') currentName = cols[2];
+      if (cols[4] && cols[4] !== '') currentDate = cols[4];
+
+      newItems.push({
+        orderId: `IMP-${Date.now()}-${index}`,
+        timestamp: cols[0] || new Date().toLocaleString('en-IN'),
+        customerPO: cols[1] || currentPO,
+        customerName: cols[2] || currentName,
+        customerEmail: cols[3] || 'N/A',
+        orderDate: cols[4] || currentDate,
+        unit: cols[5] || 'WARP(UDHANA)',
+        itemName: cols[6] || `Imported Item ${index}`,
+        color: cols[7] || 'White',
+        width: cols[8] || '56"',
+        unitOfItem: cols[9] || 'MTR',
+        qty: Number(cols[10]) || 100,
+        rate: Number(cols[11]) || 150,
+        discount: Number(cols[12]) || 0,
+        deliveryDate: cols[13] || '31/01/2026',
+        remark: cols[14] || '',
+        customerNumber: cols[15] || '',
+        billingAddress: cols[16] || '',
+        deliveryAddress: cols[17] || '',
+        transporterName: cols[18] || 'SafeXpress',
+        salesPerson: cols[19] || 'Lalit Maroo',
+        accountStatus: cols[20] || 'Approved',
+        branch: cols[22] || 'Mumbai',
+        approvalStatus: cols[21] || 'APPROVED',
+        branchHeadName: '',
+        orderNo: cols[23] || '',
+        statusAN: (cols[39] as any) || 'Open'
+      });
+    });
+
+    if (newItems.length > 0) {
+      setRawResponses(prev => [...newItems, ...prev]);
+      setShowImportModal(false);
+      setPastedDataText('');
+      setSyncFeedback(`Successfully imported ${newItems.length} rows directly into spreadsheet!`);
+      setTimeout(() => setSyncFeedback(null), 4500);
+    }
+  };
+
   // Simulate or execute Historical Data Upload to Firebase
   const handleUploadToFirebase = () => {
     setUploadProgress(10);
-    setFirebaseSyncStatus('uploading');
 
-    // Simulate batch chunk uploads with realistic progress
     let p = 10;
     const interval = setInterval(() => {
       p += 25;
       if (p >= 100) {
         clearInterval(interval);
         setUploadProgress(100);
-        setFirebaseSyncStatus('synced');
         setSyncFeedback(`Successfully uploaded all ${groupedOrders.length} orders (${rawResponses.length} rows) to Firebase Realtime Database!`);
         setTimeout(() => {
           setShowFirebaseModal(false);
@@ -584,27 +676,31 @@ export const SpreadsheetSimulator: React.FC = () => {
         }
       }
 
-      // Individual Column Header Filters
+      // Column Filters on EVERY Column
       for (const [colKey, selectedVals] of Object.entries(colFilters)) {
         if (!selectedVals || selectedVals.length === 0) continue;
 
-        let orderVal = '';
-        if (colKey === 'B') orderVal = order.customerPO;
-        else if (colKey === 'C') orderVal = order.customerName;
-        else if (colKey === 'F') {
-          // If any item matches unit
-          if (!order.items.some(it => selectedVals.includes(it.unit))) return false;
-          continue;
-        } else if (colKey === 'G') {
-          if (!order.items.some(it => selectedVals.includes(it.itemName))) return false;
-          continue;
-        } else if (colKey === 'S') orderVal = order.transporterName;
-        else if (colKey === 'T') orderVal = order.salesPerson;
-        else if (colKey === 'AN') orderVal = order.statusAN || 'Open';
-
-        if (orderVal && !selectedVals.includes(orderVal)) {
-          return false;
+        let match = false;
+        if (colKey === 'A') match = selectedVals.includes(order.timestamp);
+        else if (colKey === 'B') match = selectedVals.includes(order.customerPO);
+        else if (colKey === 'C') match = selectedVals.includes(order.customerName);
+        else if (colKey === 'D') match = selectedVals.includes(order.customerEmail);
+        else if (colKey === 'E') match = selectedVals.includes(order.orderDate);
+        else if (colKey === 'F') match = order.items.some(it => selectedVals.includes(it.unit));
+        else if (colKey === 'G') match = order.items.some(it => selectedVals.includes(it.itemName));
+        else if (colKey === 'H') match = order.items.some(it => selectedVals.includes(it.color));
+        else if (colKey === 'I') match = order.items.some(it => selectedVals.includes(it.width));
+        else if (colKey === 'S') match = selectedVals.includes(order.transporterName);
+        else if (colKey === 'T') match = selectedVals.includes(order.salesPerson);
+        else if (colKey === 'U') match = selectedVals.includes(order.accountStatus);
+        else if (colKey === 'V') match = selectedVals.includes(order.approvalStatus);
+        else if (colKey === 'X') match = selectedVals.includes(order.orderNo || 'Set SO#');
+        else if (colKey === 'AN') match = selectedVals.includes(order.statusAN || 'Open');
+        else {
+          match = true;
         }
+
+        if (!match) return false;
       }
 
       return true;
@@ -669,16 +765,24 @@ export const SpreadsheetSimulator: React.FC = () => {
     });
   };
 
-  // Get unique values for a column to show in filter dropdown
+  // Get unique values for ANY column to show in filter dropdown
   const getUniqueColumnValues = (col: string): string[] => {
     const set = new Set<string>();
     groupedOrders.forEach(o => {
-      if (col === 'B') set.add(o.customerPO);
+      if (col === 'A') set.add(o.timestamp);
+      else if (col === 'B') set.add(o.customerPO);
       else if (col === 'C') set.add(o.customerName);
+      else if (col === 'D') set.add(o.customerEmail);
+      else if (col === 'E') set.add(o.orderDate);
       else if (col === 'F') o.items.forEach(it => set.add(it.unit));
       else if (col === 'G') o.items.forEach(it => set.add(it.itemName));
+      else if (col === 'H') o.items.forEach(it => set.add(it.color));
+      else if (col === 'I') o.items.forEach(it => set.add(it.width));
       else if (col === 'S') set.add(o.transporterName);
       else if (col === 'T') set.add(o.salesPerson);
+      else if (col === 'U') set.add(o.accountStatus);
+      else if (col === 'V') set.add(o.approvalStatus);
+      else if (col === 'X') set.add(o.orderNo || 'Set SO#');
       else if (col === 'AN') set.add(o.statusAN || 'Open');
     });
     return Array.from(set).filter(Boolean);
@@ -742,8 +846,23 @@ export const SpreadsheetSimulator: React.FC = () => {
             )}
           </div>
 
-          {/* Right: View Mode Toggle, Column Visibility Manager & Firebase Sync */}
+          {/* Right: View Mode, Freeze Menu, Columns Manager, Excel Import/Export & Firebase */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Full Width Toggle */}
+            {setIsFullWidth && (
+              <button
+                onClick={() => setIsFullWidth(!isFullWidth)}
+                className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors shadow-2xs ${
+                  isFullWidth
+                    ? 'bg-emerald-700 text-white border-emerald-600'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title={isFullWidth ? "Full Screen 100% Width Active" : "Click to Expand Full Screen"}
+              >
+                <span>{isFullWidth ? '⛶ Full Size ON' : '⛶ Full Size'}</span>
+              </button>
+            )}
+
             {/* View Mode Switch */}
             <div className="flex items-center p-0.5 bg-slate-200/80 rounded-lg text-xs">
               <button
@@ -770,24 +889,93 @@ export const SpreadsheetSimulator: React.FC = () => {
               </button>
             </div>
 
+            {/* FREEZE PANES MENU (Row & Column Freeze requested by user) */}
+            <div className="relative">
+              <button
+                onClick={() => setShowFreezeMenu(!showFreezeMenu)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-colors shadow-2xs ${
+                  freezeColumns > 0
+                    ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="Freeze Header Rows or Freeze Columns (PO & Customer Name)"
+              >
+                <Pin className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Freeze {freezeColumns > 0 ? `(${freezeColumns} Cols)` : ''}</span>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
+
+              {showFreezeMenu && (
+                <div className="absolute right-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-slate-200 p-2.5 z-50 text-xs space-y-2">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block px-1">
+                    Freeze Columns
+                  </span>
+                  <div className="space-y-0.5">
+                    <button
+                      onClick={() => { setFreezeColumns(0); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      No frozen columns
+                    </button>
+                    <button
+                      onClick={() => { setFreezeColumns(1); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      Freeze 1 Column (#)
+                    </button>
+                    <button
+                      onClick={() => { setFreezeColumns(2); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 2 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      Freeze 2 Columns (# + PO) ★
+                    </button>
+                    <button
+                      onClick={() => { setFreezeColumns(3); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 3 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      Freeze 3 Columns (# + PO + Name)
+                    </button>
+                  </div>
+
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block px-1 pt-1 border-t border-slate-100">
+                    Freeze Rows
+                  </span>
+                  <div className="space-y-0.5">
+                    <button
+                      onClick={() => { setFreezeRows(1); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeRows === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      Freeze 1 Row (Header) ★
+                    </button>
+                    <button
+                      onClick={() => { setFreezeRows(0); setShowFreezeMenu(false); }}
+                      className={`w-full text-left px-2 py-1 rounded ${freezeRows === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                    >
+                      No frozen rows
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Columns Hide / Show Button */}
             <button
               onClick={() => setShowColManager(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg shadow-xs transition-colors"
-              title="Hide / Show Specific Columns (Manual columns, Logistics, Follow-ups)"
+              title="Hide / Show Specific Columns"
             >
               <Columns className="w-3.5 h-3.5 text-emerald-700" />
               <span>Columns ({Object.values(visibleCols).filter(Boolean).length}/45)</span>
             </button>
 
-            {/* Firebase Cloud Sync Button */}
+            {/* Direct Excel Import Button */}
             <button
-              onClick={() => setShowFirebaseModal(true)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-xs transition-colors"
-              title="Upload historical data to Firebase & connect live cloud database"
+              onClick={() => setShowImportModal(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg shadow-xs transition-colors"
+              title="Direct Import Excel / CSV Data"
             >
-              <Flame className="w-3.5 h-3.5 fill-white" />
-              <span>Firebase Cloud</span>
+              <Upload className="w-3.5 h-3.5 text-blue-600" />
+              <span>Import Excel</span>
             </button>
 
             {/* Export CSV */}
@@ -797,6 +985,16 @@ export const SpreadsheetSimulator: React.FC = () => {
               title="Export CSV / Excel"
             >
               <Download className="w-4 h-4" />
+            </button>
+
+            {/* Firebase Cloud Sync Button */}
+            <button
+              onClick={() => setShowFirebaseModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-lg shadow-xs transition-colors"
+              title="Upload historical data to Firebase & connect live cloud database"
+            >
+              <Flame className="w-3.5 h-3.5 fill-white" />
+              <span>Firebase</span>
             </button>
 
             {/* Reset data */}
@@ -810,24 +1008,9 @@ export const SpreadsheetSimulator: React.FC = () => {
           </div>
         </div>
 
-        {/* Google Sheets Formula Bar */}
-        <div className="px-3 py-1.5 bg-white border-b border-slate-200 flex items-center gap-3 text-xs font-mono">
-          <div className="px-2 py-0.5 bg-slate-100 border border-slate-300 rounded text-slate-700 font-bold min-w-[50px] text-center">
-            {selectedCell.col}{selectedCell.row}
-          </div>
-          <div className="text-slate-400 select-none font-bold">fx</div>
-          <div className="text-slate-800 flex-1 truncate font-sans text-xs bg-slate-50 px-2.5 py-0.5 rounded border border-slate-200">
-            {selectedCell.formula ? (
-              <span className="text-blue-700 font-mono font-medium">{selectedCell.formula}</span>
-            ) : (
-              <span>{selectedCell.val || '—'}</span>
-            )}
-          </div>
-        </div>
-
         {/* Sync feedback notification */}
         {syncFeedback && (
-          <div className="p-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between text-xs text-emerald-900">
+          <div className="p-2.5 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between text-xs text-emerald-900 animate-in fade-in duration-150">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span className="font-medium">{syncFeedback}</span>
@@ -836,7 +1019,7 @@ export const SpreadsheetSimulator: React.FC = () => {
           </div>
         )}
 
-        {/* KEY KPI METRIC STRIP (Exact from user prompt) */}
+        {/* KEY KPI METRIC STRIP */}
         <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 p-3 bg-slate-100/70 border-b border-slate-200 text-xs">
           <div className="bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
             <span className="text-[10px] uppercase font-bold text-slate-500 block">Orders</span>
@@ -866,14 +1049,24 @@ export const SpreadsheetSimulator: React.FC = () => {
           </div>
         </div>
 
-        {/* THE MAIN SPREADSHEET TABLE GRID CONTAINER (Vertical & Horizontal Scroll Box) */}
-        <div className="overflow-x-auto max-h-[620px] select-text relative">
+        {/* THE MAIN SPREADSHEET TABLE GRID CONTAINER (Vertical & Horizontal Scroll Box with Freeze Panes) */}
+        <div className={`overflow-x-auto overflow-y-auto ${isFullWidth ? 'h-[calc(100vh-215px)] max-h-[82vh]' : 'h-[640px] max-h-[72vh]'} select-text relative fms-sheet-scroll border border-slate-300 rounded-lg shadow-inner bg-white`}>
           <table className="w-full border-collapse text-xs text-left">
             {/* The Sticky Column Letters Header */}
-            <thead className="sticky top-0 z-20 bg-slate-200 text-slate-700 font-mono text-[11px] select-none border-b-2 border-slate-400">
+            <thead className={`${freezeRows === 1 ? 'sticky top-0 z-30' : ''} bg-slate-200 text-slate-700 font-mono text-[11px] select-none border-b-2 border-slate-400`}>
               <tr>
-                <th className="w-12 px-2 py-1 text-center bg-slate-300 border-r border-slate-400 font-bold">#</th>
-                <th className="w-14 px-2 py-1 text-center bg-slate-300 border-r border-slate-400 font-bold">Action</th>
+                {/* # Column */}
+                <th
+                  className={`w-12 px-2 py-1 text-center bg-slate-300 border-r border-slate-400 font-bold ${
+                    freezeColumns >= 1 ? 'sticky left-0 z-40 bg-slate-300 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]' : ''
+                  }`}
+                >
+                  #
+                </th>
+                {/* Action Column */}
+                <th className="w-14 px-2 py-1 text-center bg-slate-300 border-r border-slate-400 font-bold">
+                  Action
+                </th>
 
                 {fmsColumnMapping.map(col => {
                   if (!visibleCols[col.sheetCol]) return null;
@@ -895,10 +1088,18 @@ export const SpreadsheetSimulator: React.FC = () => {
                     bgColor = 'bg-emerald-300 text-emerald-950';
                   }
 
+                  // Sticky freeze column styles
+                  let stickyStyle = '';
+                  if (col.sheetCol === 'B' && freezeColumns >= 2) {
+                    stickyStyle = 'sticky left-[48px] z-40 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]';
+                  } else if (col.sheetCol === 'C' && freezeColumns >= 3) {
+                    stickyStyle = 'sticky left-[158px] z-40 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]';
+                  }
+
                   return (
                     <th
                       key={col.sheetCol}
-                      className={`px-2 py-1 border-r border-slate-400 text-center font-bold ${bgColor}`}
+                      className={`px-2 py-1 border-r border-slate-400 text-center font-bold ${bgColor} ${stickyStyle}`}
                     >
                       <div className="flex items-center justify-center gap-1">
                         <span>{col.sheetCol}</span>
@@ -916,20 +1117,38 @@ export const SpreadsheetSimulator: React.FC = () => {
                 })}
               </tr>
 
-              {/* Row 2: Human Readable Column Names with Column Header Filters */}
+              {/* Row 2: Human Readable Column Names with Filters on EVERY Column */}
               <tr className="bg-slate-100 font-sans text-xs font-bold text-slate-800 border-b-2 border-black">
-                <th className="px-2 py-2 text-center bg-slate-200 border-r border-slate-300">1</th>
-                <th className="px-2 py-2 text-center bg-slate-200 border-r border-slate-300 text-[11px] text-slate-500">Edit</th>
+                <th
+                  className={`px-2 py-2 text-center bg-slate-200 border-r border-slate-300 ${
+                    freezeColumns >= 1 ? 'sticky left-0 z-40 bg-slate-200 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]' : ''
+                  }`}
+                >
+                  1
+                </th>
+                <th className="px-2 py-2 text-center bg-slate-200 border-r border-slate-300 text-[11px] text-slate-500">
+                  Edit
+                </th>
 
                 {fmsColumnMapping.map(col => {
                   if (!visibleCols[col.sheetCol]) return null;
-                  const hasDropdownFilter = ['B', 'C', 'F', 'G', 'S', 'T', 'AN'].includes(col.sheetCol);
                   const isFiltered = colFilters[col.sheetCol] && colFilters[col.sheetCol].length > 0;
+
+                  // Sticky freeze column styles
+                  let stickyStyle = '';
+                  let bgHead = 'bg-slate-100';
+                  if (col.sheetCol === 'B' && freezeColumns >= 2) {
+                    stickyStyle = 'sticky left-[48px] z-40 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]';
+                    bgHead = 'bg-blue-50';
+                  } else if (col.sheetCol === 'C' && freezeColumns >= 3) {
+                    stickyStyle = 'sticky left-[158px] z-40 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]';
+                    bgHead = 'bg-blue-50';
+                  }
 
                   return (
                     <th
                       key={col.sheetCol}
-                      className={`px-3 py-2 border-r border-slate-300 whitespace-nowrap ${
+                      className={`px-3 py-2 border-r border-slate-300 whitespace-nowrap ${bgHead} ${stickyStyle} ${
                         col.sheetCol === 'Y'
                           ? 'bg-amber-50 text-amber-900'
                           : col.sheetCol === 'Z'
@@ -941,17 +1160,16 @@ export const SpreadsheetSimulator: React.FC = () => {
                     >
                       <div className="flex items-center justify-between gap-1.5">
                         <span>{col.name}</span>
-                        {hasDropdownFilter && (
-                          <button
-                            onClick={() => setActiveFilterCol(activeFilterCol === col.sheetCol ? null : col.sheetCol)}
-                            className={`p-0.5 rounded hover:bg-slate-200 transition-colors ${
-                              isFiltered ? 'text-rose-600 font-extrabold bg-rose-50' : 'text-slate-400'
-                            }`}
-                            title={`Filter / Sort ${col.name}`}
-                          >
-                            <Filter className="w-3 h-3" />
-                          </button>
-                        )}
+                        {/* Filter on EVERY column */}
+                        <button
+                          onClick={() => setActiveFilterCol(activeFilterCol === col.sheetCol ? null : col.sheetCol)}
+                          className={`p-0.5 rounded hover:bg-slate-200 transition-colors ${
+                            isFiltered ? 'text-rose-600 font-extrabold bg-rose-50' : 'text-slate-400'
+                          }`}
+                          title={`Filter, Sort or Hide ${col.name} (${col.sheetCol})`}
+                        >
+                          <Filter className="w-3 h-3" />
+                        </button>
                       </div>
                     </th>
                   );
@@ -970,8 +1188,7 @@ export const SpreadsheetSimulator: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                renderSpreadsheetRows(filteredOrders, viewMode === 'merged', visibleCols, {
-                  onSelectCell: setSelectedCell,
+                renderSpreadsheetRows(filteredOrders, viewMode === 'merged', visibleCols, freezeColumns, {
                   onDispatchChange: handleDispatchChange,
                   onStatusChange: handleStatusChange,
                   onDeleteOrder: handleDeleteOrder,
@@ -990,7 +1207,7 @@ export const SpreadsheetSimulator: React.FC = () => {
           </table>
         </div>
 
-        {/* COLUMN HEADER FILTER POPOVER */}
+        {/* COLUMN HEADER FILTER POPOVER (Works on EVERY Column with HIDE THIS COLUMN Option) */}
         {activeFilterCol && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setActiveFilterCol(null)}>
             <div
@@ -1000,7 +1217,7 @@ export const SpreadsheetSimulator: React.FC = () => {
               <div className="flex items-center justify-between pb-2 border-b border-slate-200">
                 <span className="font-bold text-slate-900 flex items-center gap-1.5">
                   <Filter className="w-3.5 h-3.5 text-emerald-600" />
-                  Filter Column: {fmsColumnMapping.find(c => c.sheetCol === activeFilterCol)?.name} ({activeFilterCol})
+                  {fmsColumnMapping.find(c => c.sheetCol === activeFilterCol)?.name} ({activeFilterCol})
                 </span>
                 <button onClick={() => setActiveFilterCol(null)} className="text-slate-400 hover:text-slate-600">
                   <X className="w-4 h-4" />
@@ -1031,10 +1248,24 @@ export const SpreadsheetSimulator: React.FC = () => {
                 </button>
               </div>
 
+              {/* HIDE THIS COLUMN OPTION (Requested by user) */}
+              <button
+                onClick={() => {
+                  setVisibleCols(prev => ({ ...prev, [activeFilterCol]: false }));
+                  setActiveFilterCol(null);
+                  setSyncFeedback(`Column ${activeFilterCol} hidden. Use 'Columns' button to unhide.`);
+                  setTimeout(() => setSyncFeedback(null), 3000);
+                }}
+                className="w-full py-1.5 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded font-semibold flex items-center justify-center gap-1.5 border border-rose-200"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>Hide this Column ({activeFilterCol})</span>
+              </button>
+
               {/* Unique values list with checkboxes */}
               <div>
                 <span className="text-[11px] font-semibold text-slate-600 block mb-1">Select values to filter:</span>
-                <div className="max-h-48 overflow-y-auto space-y-1 bg-slate-50 p-2 rounded border border-slate-200">
+                <div className="max-h-44 overflow-y-auto space-y-1 bg-slate-50 p-2 rounded border border-slate-200">
                   {getUniqueColumnValues(activeFilterCol).map(val => {
                     const isChecked = !colFilters[activeFilterCol] || colFilters[activeFilterCol].includes(val);
                     return (
@@ -1140,14 +1371,94 @@ export const SpreadsheetSimulator: React.FC = () => {
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
             <span>Live Web Sheet Workspace</span>
             <span>·</span>
-            <span>Multi-User Safe</span>
+            <span>Freeze Panes Active</span>
             <span>·</span>
-            <span className="font-mono text-emerald-800 font-semibold">1 Lakh Data Ready</span>
+            <span className="font-mono text-emerald-800 font-semibold">Vercel Ready</span>
           </div>
         </div>
       </div>
 
-      {/* MODAL: COLUMN VISIBILITY MANAGER (HIDE / SHOW MANUAL COLUMNS) */}
+      {/* MODAL: DIRECT EXCEL / CSV DATA IMPORT */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm flex items-center gap-2">
+                  <Upload className="w-4 h-4 text-blue-400" />
+                  Direct Import Excel / CSV Data into Grid
+                </h3>
+                <p className="text-[11px] text-slate-300">
+                  Paste rows directly from Excel / Google Sheets or upload a .csv file
+                </p>
+              </div>
+              <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                  Option 1: Paste Excel / Google Sheets rows directly (Ctrl+V)
+                </label>
+                <textarea
+                  rows={8}
+                  value={pastedDataText}
+                  onChange={(e) => setPastedDataText(e.target.value)}
+                  placeholder="Paste rows copied directly from your Google Sheet or Excel here...&#10;Columns will be automatically mapped to PO, Customer, Items, Qty, Rate, etc."
+                  className="w-full p-2.5 border border-slate-300 rounded-lg font-mono text-[11px] focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                  Option 2: Select a .CSV / .TXT file from your computer
+                </label>
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        const content = event.target?.result as string;
+                        if (content) setPastedDataText(content);
+                      };
+                      reader.readAsText(file);
+                    }
+                  }}
+                  className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                <span className="text-[11px] text-slate-400">
+                  Supports comma (,) and tab-separated formats
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowImportModal(false)}
+                    className="px-3.5 py-1.5 text-slate-600 hover:text-slate-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleParseImportedData(pastedDataText)}
+                    disabled={!pastedDataText.trim()}
+                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-50"
+                  >
+                    Import into Sheet Grid
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COLUMN VISIBILITY MANAGER (HIDE / SHOW MANUAL COLUMNS & HIDE SELECTED) */}
       {showColManager && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden">
@@ -1168,7 +1479,7 @@ export const SpreadsheetSimulator: React.FC = () => {
 
             <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto text-xs">
               {/* Quick toggle presets */}
-              <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+              <div className="flex flex-wrap items-center gap-2 pb-2 border-b border-slate-200">
                 <button
                   onClick={() => {
                     const all: Record<string, boolean> = {};
@@ -1505,13 +1816,13 @@ export const SpreadsheetSimulator: React.FC = () => {
   );
 };
 
-// RENDER FUNCTION FOR ROWS (Handles Merged A-E, N-X, and AN dropdown)
+// RENDER FUNCTION FOR ROWS (Handles Merged A-E, N-X, and Freeze Panes)
 function renderSpreadsheetRows(
   orders: GroupedOrder[],
   useMerge: boolean,
   visibleCols: Record<string, boolean>,
+  freezeColumns: number,
   handlers: {
-    onSelectCell: (info: { col: string; row: number; val: string; formula?: string }) => void;
     onDispatchChange: (orderKey: string, item: any, valStr: string) => void;
     onStatusChange: (orderKey: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => void;
     onDeleteOrder: (orderKey: string, poName: string) => void;
@@ -1546,6 +1857,11 @@ function renderSpreadsheetRows(
 
       const cellBottomBorder = useMerge ? 'border-b-2 border-b-slate-400' : '';
 
+      // Freeze column positioning styles
+      const numSticky = freezeColumns >= 1 ? 'sticky left-0 z-20 bg-slate-50 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]' : '';
+      const poSticky = freezeColumns >= 2 ? 'sticky left-[48px] z-20 bg-blue-50/90 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]' : '';
+      const nameSticky = freezeColumns >= 3 ? 'sticky left-[158px] z-20 bg-blue-50/90 shadow-[2px_0_4px_-1px_rgba(0,0,0,0.15)]' : '';
+
       rows.push(
         <tr
           key={`${order.orderKey}_${item.id}_${itemIdx}`}
@@ -1553,8 +1869,7 @@ function renderSpreadsheetRows(
         >
           {/* Row Number */}
           <td
-            className={`px-2 py-2 text-center bg-slate-50 border-r border-slate-300 font-mono text-[11px] text-slate-500 ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
-            onClick={() => handlers.onSelectCell({ col: 'Row', row: thisRow, val: `Row ${thisRow}` })}
+            className={`px-2 py-2 text-center bg-slate-50 border-r border-slate-300 font-mono text-[11px] text-slate-500 ${numSticky} ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
           >
             {thisRow}
           </td>
@@ -1591,7 +1906,6 @@ function renderSpreadsheetRows(
               {visibleCols['A'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'A', row: thisRow, val: order.timestamp })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.timestamp}
@@ -1602,8 +1916,7 @@ function renderSpreadsheetRows(
               {visibleCols['B'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'B', row: thisRow, val: order.customerPO })}
-                  className={`px-3 py-2 border-r border-slate-300 font-bold text-slate-900 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
+                  className={`px-3 py-2 border-r border-slate-300 font-bold text-slate-900 align-middle bg-blue-50/20 whitespace-nowrap ${poSticky} ${cellBottomBorder}`}
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={order.customerPO === '5281' ? 'text-emerald-700 font-extrabold' : ''}>{order.customerPO}</span>
@@ -1620,8 +1933,7 @@ function renderSpreadsheetRows(
               {visibleCols['C'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'C', row: thisRow, val: order.customerName })}
-                  className={`px-3 py-2 border-r border-slate-300 font-semibold text-slate-800 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
+                  className={`px-3 py-2 border-r border-slate-300 font-semibold text-slate-800 align-middle bg-blue-50/20 whitespace-nowrap ${nameSticky} ${cellBottomBorder}`}
                 >
                   {order.customerName}
                 </td>
@@ -1631,7 +1943,6 @@ function renderSpreadsheetRows(
               {visibleCols['D'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'D', row: thisRow, val: order.customerEmail })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap text-xs ${cellBottomBorder}`}
                 >
                   {order.customerEmail}
@@ -1642,7 +1953,6 @@ function renderSpreadsheetRows(
               {visibleCols['E'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'E', row: thisRow, val: order.orderDate })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.orderDate}
@@ -1655,7 +1965,6 @@ function renderSpreadsheetRows(
           {/* Col F: Unit */}
           {visibleCols['F'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'F', row: thisRow, val: item.unit })}
               className={`px-3 py-2 border-r border-slate-300 text-slate-700 whitespace-nowrap font-medium ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.unit}
@@ -1665,7 +1974,6 @@ function renderSpreadsheetRows(
           {/* Col G: Item Name */}
           {visibleCols['G'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'G', row: thisRow, val: item.itemName })}
               className={`px-3 py-2 border-r border-slate-300 font-semibold text-slate-900 whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               <div className="flex items-center justify-between gap-2">
@@ -1689,7 +1997,6 @@ function renderSpreadsheetRows(
           {/* Col H: Color */}
           {visibleCols['H'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'H', row: thisRow, val: item.color })}
               className={`px-3 py-2 border-r border-slate-300 text-slate-700 whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.color}
@@ -1699,7 +2006,6 @@ function renderSpreadsheetRows(
           {/* Col I: Width */}
           {visibleCols['I'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'I', row: thisRow, val: item.width })}
               className={`px-3 py-2 border-r border-slate-300 text-slate-700 whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.width}
@@ -1709,7 +2015,6 @@ function renderSpreadsheetRows(
           {/* Col J: Unit (of Item) */}
           {visibleCols['J'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'J', row: thisRow, val: item.unitOfItem })}
               className={`px-3 py-2 border-r border-slate-300 text-slate-600 whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.unitOfItem}
@@ -1719,7 +2024,6 @@ function renderSpreadsheetRows(
           {/* Col K: Qty */}
           {visibleCols['K'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'K', row: thisRow, val: String(item.qty) })}
               className={`px-3 py-2 border-r border-slate-300 font-mono font-bold text-slate-900 text-right whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.qty.toLocaleString()}
@@ -1729,7 +2033,6 @@ function renderSpreadsheetRows(
           {/* Col L: Rate */}
           {visibleCols['L'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'L', row: thisRow, val: String(item.rate) })}
               className={`px-3 py-2 border-r border-slate-300 font-mono text-slate-700 text-right whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               ₹{item.rate}
@@ -1739,7 +2042,6 @@ function renderSpreadsheetRows(
           {/* Col M: Discount */}
           {visibleCols['M'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'M', row: thisRow, val: `${item.discount}%` })}
               className={`px-3 py-2 border-r border-slate-300 font-mono text-slate-700 text-right whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.discount}%
@@ -1749,7 +2051,6 @@ function renderSpreadsheetRows(
           {/* Col N: Delivery Date */}
           {visibleCols['N'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'N', row: thisRow, val: item.deliveryDate })}
               className={`px-3 py-2 border-r border-slate-300 text-slate-600 whitespace-nowrap ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               {item.deliveryDate}
@@ -1763,7 +2064,6 @@ function renderSpreadsheetRows(
               {visibleCols['O'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'O', row: thisRow, val: order.remark })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate ${cellBottomBorder}`}
                   title={order.remark}
                 >
@@ -1775,7 +2075,6 @@ function renderSpreadsheetRows(
               {visibleCols['P'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'P', row: thisRow, val: order.customerNumber })}
                   className={`px-3 py-2 border-r border-slate-300 font-mono text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.customerNumber}
@@ -1786,7 +2085,6 @@ function renderSpreadsheetRows(
               {visibleCols['Q'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'Q', row: thisRow, val: order.billingAddress })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate ${cellBottomBorder}`}
                   title={order.billingAddress}
                 >
@@ -1798,7 +2096,6 @@ function renderSpreadsheetRows(
               {visibleCols['R'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'R', row: thisRow, val: order.deliveryAddress })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate ${cellBottomBorder}`}
                   title={order.deliveryAddress}
                 >
@@ -1810,7 +2107,6 @@ function renderSpreadsheetRows(
               {visibleCols['S'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'S', row: thisRow, val: order.transporterName })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.transporterName}
@@ -1821,7 +2117,6 @@ function renderSpreadsheetRows(
               {visibleCols['T'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'T', row: thisRow, val: order.salesPerson })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.salesPerson}
@@ -1832,7 +2127,6 @@ function renderSpreadsheetRows(
               {visibleCols['U'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'U', row: thisRow, val: order.accountStatus })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-medium">
@@ -1845,7 +2139,6 @@ function renderSpreadsheetRows(
               {visibleCols['V'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'V', row: thisRow, val: order.approvalStatus })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.approvalStatus}
@@ -1856,7 +2149,6 @@ function renderSpreadsheetRows(
               {visibleCols['W'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'W', row: thisRow, val: order.branch })}
                   className={`px-3 py-2 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   {order.branch}
@@ -1867,7 +2159,6 @@ function renderSpreadsheetRows(
               {visibleCols['X'] && (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => handlers.onSelectCell({ col: 'X', row: thisRow, val: order.orderNo || '' })}
                   className={`px-3 py-2 border-r border-slate-300 font-mono font-medium text-slate-900 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   <div className="flex items-center gap-1.5">
@@ -1893,7 +2184,6 @@ function renderSpreadsheetRows(
           {/* COLUMN Y: DISPATCH QNT (MANUAL USER ENTRY PER ITEM ROW) */}
           {visibleCols['Y'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'Y', row: thisRow, val: String(item.dispatchQty || 0), formula: 'Manual Input' })}
               className={`px-2 py-1.5 border-r border-slate-300 bg-amber-50/40 whitespace-nowrap text-right ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               <div className="flex items-center justify-end gap-1">
@@ -1912,7 +2202,6 @@ function renderSpreadsheetRows(
           {/* COLUMN Z: BALANCE QNT (= K - Y) */}
           {visibleCols['Z'] && (
             <td
-              onClick={() => handlers.onSelectCell({ col: 'Z', row: thisRow, val: String(item.balanceQty || 0), formula: `=IF(K${thisRow}="","",K${thisRow}-N(Y${thisRow}))` })}
               className={`px-3 py-2 border-r border-slate-300 bg-emerald-50/40 whitespace-nowrap text-right ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
               <div className="flex items-center justify-end gap-2">
@@ -2029,7 +2318,6 @@ function renderSpreadsheetRows(
           {showHeaderCols && visibleCols['AN'] && (
             <td
               rowSpan={rowSpan}
-              onClick={() => handlers.onSelectCell({ col: 'AN', row: thisRow, val: currentStatus, formula: 'Data Validation: [Open, In-Progress, Closed]' })}
               className={`px-3 py-2 border-r border-slate-300 text-center align-middle bg-sky-50/30 whitespace-nowrap ${cellBottomBorder}`}
             >
               <div className="flex items-center justify-center">
@@ -2056,7 +2344,6 @@ function renderSpreadsheetRows(
           {showHeaderCols && visibleCols['AO'] && (
             <td
               rowSpan={rowSpan}
-              onClick={() => handlers.onSelectCell({ col: 'AO', row: thisRow, val: handlers.aoStatuses[currentOrderKey] || 'Pending' })}
               className={`px-3 py-2 border-r border-slate-300 text-center align-middle bg-purple-50/20 whitespace-nowrap ${cellBottomBorder}`}
             >
               <select
@@ -2079,7 +2366,6 @@ function renderSpreadsheetRows(
           {showHeaderCols && visibleCols['AP'] && (
             <td
               rowSpan={rowSpan}
-              onClick={() => handlers.onSelectCell({ col: 'AP', row: thisRow, val: 'Sent Messages', formula: `=IF(AO${thisRow}="Message Sent", HYPERLINK(...), "")` })}
               className={`px-3 py-2 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}
             >
               {(handlers.aoStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
