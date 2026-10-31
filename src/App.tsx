@@ -46,56 +46,6 @@ export default function App() {
         {activeTab === 'columns' && <ColumnMapper />}
         {activeTab === 'guide' && <SetupGuide />}
       </main>
-
-      {/* Quiet Clean Footer */}
-      <footer className="border-t border-slate-200 bg-white py-4 mt-8">
-        <div
-          className={`mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 ${
-            isFullWidth ? 'px-4' : 'max-w-7xl px-4 sm:px-6 lg:px-8'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700">GINZA FMS Cloud Sheet Engine</span>
-            <span>·</span>
-            <span>Connected: mis.mumbai@ginzalimited.com</span>
-            <span>·</span>
-            <span className="text-emerald-700 font-medium">100k Rows Optimized</span>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setActiveTab('firebase')}
-              className="hover:text-amber-700 font-bold text-amber-800 transition-colors"
-            >
-              🔥 Firebase Sync Hub
-            </button>
-            <button
-              onClick={() => setActiveTab('advisor')}
-              className="hover:text-emerald-700 font-medium transition-colors"
-            >
-              Big Data Architecture
-            </button>
-            <button
-              onClick={() => setActiveTab('simulator')}
-              className="hover:text-slate-800 transition-colors"
-            >
-              Spreadsheet Grid
-            </button>
-            <button
-              onClick={() => setActiveTab('code')}
-              className="hover:text-slate-800 transition-colors"
-            >
-              Copy Script
-            </button>
-            <button
-              onClick={() => setActiveTab('guide')}
-              className="hover:text-slate-800 transition-colors"
-            >
-              Vercel / GitHub
-            </button>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

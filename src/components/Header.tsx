@@ -152,89 +152,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
-      {/* 1. TOP-MOST LIVE MENU BAR WITH ALL CONNECTED GOOGLE IDS */}
-      <div className="bg-slate-900 text-slate-200 border-b border-slate-800 text-[11px] py-1 px-3 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Left: Connected IDs Presence Ribbon */}
-          <div className="flex items-center gap-2 overflow-x-auto py-0.5 scrollbar-none">
-            <button
-              onClick={() => setShowConnectedUsersModal(true)}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-900 transition-colors font-bold shrink-0"
-              title="Click to view all live Google IDs and their active cell positions"
-            >
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <Users className="w-3 h-3 text-emerald-400" />
-              <span>{connectedUsers.length} Live Team IDs Connected</span>
-            </button>
-
-            {/* Micro-pills of each connected ID */}
-            <div className="hidden md:flex items-center gap-1.5 shrink-0">
-              {connectedUsers.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => setShowConnectedUsersModal(true)}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/80 hover:border-slate-500 text-slate-300 text-[10px] font-mono transition-colors"
-                  title={`${u.name} (${u.role}) - Currently on ${u.activeCell}`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${u.status === 'editing' ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'}`}></span>
-                  <span>{u.email}</span>
-                </button>
-              ))}
-
-              <button
-                onClick={() => setShowConnectedUsersModal(true)}
-                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold px-1 flex items-center gap-0.5"
-                title="Add more connected team members"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Add ID</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Right: Full Size Toggle & Vercel Fix Quick Access */}
-          <div className="flex items-center gap-3 shrink-0 ml-auto">
-            {/* Vercel Build Fix Alert Pill */}
-            <button
-              onClick={() => setShowVercelFixModal(true)}
-              className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-medium transition-colors"
-              title="Vercel 'esbuild peerOptional' error fixed! Click for 10-second sync solution"
-            >
-              <AlertCircle className="w-3 h-3 text-amber-400" />
-              <span className="font-semibold">Vercel Build Fix</span>
-              <span className="bg-emerald-500 text-slate-950 font-bold px-1 rounded text-[9px]">Resolved ✓</span>
-            </button>
-
-            {/* FULL SIZE / EXPAND SPREADSHEET TOGGLE */}
-            <button
-              onClick={() => setIsFullWidth(!isFullWidth)}
-              className={`flex items-center gap-1 px-2 py-0.5 rounded border transition-colors font-semibold ${
-                isFullWidth
-                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-2xs'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-              }`}
-              title={isFullWidth ? "Switch to Boxed Container" : "Expand to 100% Full Viewport Size"}
-            >
-              {isFullWidth ? (
-                <>
-                  <Minimize2 className="w-3 h-3" />
-                  <span>Full Size ON</span>
-                </>
-              ) : (
-                <>
-                  <Maximize2 className="w-3 h-3" />
-                  <span>Full Size OFF</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. MAIN HEADER NAVIGATION BAR */}
+      {/* 1. MAIN HEADER NAVIGATION BAR */}
       <header className="sticky top-0 z-40 bg-white border-b border-slate-200 shadow-2xs">
         <div className={`mx-auto transition-all ${isFullWidth ? 'px-3 sm:px-6' : 'max-w-7xl px-4 sm:px-6 lg:px-8'}`}>
           <div className="flex items-center justify-between gap-4 h-16">
@@ -253,7 +171,7 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 </div>
                 <span className="hidden sm:inline-block text-xs font-medium text-slate-500">
-                  Product Order → Product Automation Grid
+                  Product Order → Product Automation 
                 </span>
               </div>
             </div>
