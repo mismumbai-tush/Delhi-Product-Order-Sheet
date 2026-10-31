@@ -16,36 +16,40 @@ export interface OrderItem {
 
 export interface ProductOrderRow {
   orderId: string;
-  timestamp: string;
-  customerPO: string;
-  customerName: string;
-  customerEmail: string;
-  orderDate: string;
-  unit: string;
-  itemName: string;
-  color: string;
-  width: string;
-  unitOfItem: string;
-  qty: number;
-  rate: number;
-  discount: number;
-  deliveryDate: string;
-  remark: string;
-  customerNumber: string;
-  billingAddress: string;
-  deliveryAddress: string;
-  transporterName: string;
-  salesPerson: string;
-  accountStatus: string;
-  branch: string;
-  approvalStatus: string;
-  branchHeadName: string;
-  orderNo?: string;      // Col AA (27 in sheet, index 26)
+  referenceNo?: string;        // Col 1: Order No (e.g. GNZ-468115)
+  timestamp: string;          // Col 2: Timestamp
+  customerPO: string;         // Col 3: Customer PO
+  customerName: string;       // Col 4: Customer Name
+  customerEmail: string;      // Col 5: Customer Email
+  orderDate: string;          // Col 6: Order Date
+  unit: string;               // Col 7: Unit (Category)
+  itemName: string;           // Col 8: Item Name
+  color: string;              // Col 9: Color
+  width: string;              // Col 10: Width
+  unitOfItem: string;         // Col 11: Unit (of item)
+  qty: number;                // Col 12: Qty
+  rate: number;               // Col 13: Rate
+  discount: number;           // Col 14: Discount
+  deliveryDate: string;       // Col 15: Delivery Date
+  remark: string;             // Col 16: Remark
+  customerNumber: string;     // Col 17: Customer Number
+  billingAddress: string;     // Col 18: Billing Address
+  deliveryAddress: string;    // Col 19: Delivery Address
+  transporterName: string;    // Col 20: Transporter Name
+  salesPerson: string;        // Col 21: Sales Person Name
+  accountStatus: string;      // Col 22: Account Status
+  branch: string;             // Col 23: Branch
+  approvalStatus: string;     // Col 24: Approval Status
+  branchHeadName: string;     // Col 25: Branch Head Name
+  branchHeadEmail?: string;   // Col 26: Branch Head Email
+  orderNo?: string;           // Col 27: Order No (O.N Generate)
+  orderNoTimestamp?: string;  // Col 28: Timestamp ( O.N Generate )
   statusAN?: 'Open' | 'In-Progress' | 'Closed'; // Col AN (40)
 }
 
 export interface GroupedOrder {
   orderKey: string;
+  referenceNo?: string;
   timestamp: string;
   customerPO: string;
   customerName: string;
@@ -61,7 +65,10 @@ export interface GroupedOrder {
   accountStatus: string;
   branch: string;
   approvalStatus: string;
+  branchHeadName?: string;
+  branchHeadEmail?: string;
   orderNo: string;
+  orderNoTimestamp?: string;
   statusAN?: 'Open' | 'In-Progress' | 'Closed';
 }
 

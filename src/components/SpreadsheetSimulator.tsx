@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GroupedOrder, ProductOrderRow, OrderItem } from '../types/fms';
-import { initialRawResponses, initialExistingDispatch, fmsColumnMapping } from '../data/sampleOrders';
+import { initialRawResponses, initialExistingDispatch, fmsColumnMapping, productOrderColumns } from '../data/sampleOrders';
+import { ProductOrderView } from './ProductOrderView';
 import {
   RotateCcw,
   PlusCircle,
@@ -51,12 +52,12 @@ import {
   Minimize2
 } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v7';
-const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v7';
-const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v7';
-const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v7';
-const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v7';
-const LOCAL_STORAGE_CONFIRM_KEY = 'ginza_fms_confirm_msg_v7';
+const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v9';
+const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v9';
+const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v9';
+const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v9';
+const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v9';
+const LOCAL_STORAGE_CONFIRM_KEY = 'ginza_fms_confirm_msg_v9';
 
 interface SpreadsheetSimulatorProps {
   isFullWidth?: boolean;
@@ -180,8 +181,8 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'MEHTA-0041'
   });
 
-  // Active Sheet tab: 'automation' (Active Orders: Open & In-Progress), 'closed' (Closed Orders Archive), 'all' (All Orders)
-  const [activeSheetTab, setActiveSheetTab] = useState<'automation' | 'closed' | 'all'>('automation');
+  // Active Sheet tab: 'product_order' (28-Col Raw Flat Sheet), 'automation' (Product Automation: Active Orders), 'closed' (Closed Orders Archive)
+  const [activeSheetTab, setActiveSheetTab] = useState<'product_order' | 'automation' | 'closed'>('product_order');
 
   // Status Filter in Toolbar
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Open' | 'In-Progress' | 'Closed'>('ALL');
@@ -259,6 +260,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       if (!map[orderKey]) {
         map[orderKey] = {
           orderKey,
+          referenceNo: row.referenceNo || '',
           timestamp: row.timestamp,
           customerPO: row.customerPO,
           customerName: row.customerName,
@@ -274,9 +276,17 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
           accountStatus: row.accountStatus,
           branch: row.branch,
           approvalStatus: row.approvalStatus,
+          branchHeadName: row.branchHeadName || 'Vinay Chhajer',
+          branchHeadEmail: row.branchHeadEmail || 'vinay.chhajer@ginzalimited.com',
           orderNo: row.orderNo || '',
+          orderNoTimestamp: row.orderNoTimestamp || '',
           statusAN: (row.statusAN as any) || 'Open'
         };
+      } else {
+        if (!map[orderKey].orderNo && row.orderNo) {
+          map[orderKey].orderNo = row.orderNo;
+          map[orderKey].orderNoTimestamp = row.orderNoTimestamp;
+        }
       }
 
       const itemKey = `${orderKey}___${row.itemName.trim()}___${row.color.trim()}___${row.width.trim()}`;
@@ -477,6 +487,77 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     }
   };
 
+  // Generate or assign Order No for a row in Product Order sheet
+  const handleGenerateOrderNo = (orderId: string, customNo?: string) => {
+    const generatedNo = (customNo && customNo.trim() !== '')
+      ? customNo.trim()
+      : `DLFSO2526-0${Math.floor(1750 + Math.random() * 50)}`;
+    const nowStr = new Date().toLocaleString('en-IN');
+    let affectedItem = '';
+
+    setRawResponses(prev =>
+      prev.map(row => {
+        if (row.orderId === orderId) {
+          affectedItem = row.itemName;
+          return {
+            ...row,
+            orderNo: generatedNo,
+            orderNoTimestamp: nowStr,
+            statusAN: row.statusAN || 'Open' // By default, status in Col AN is Open
+          };
+        }
+        return row;
+      })
+    );
+
+    setSyncFeedback(
+      `Order No "${generatedNo}" assigned for ${affectedItem || orderId}! Order flowed into "Product Automation (Active Orders)" with Col AN default "Open".`
+    );
+    setTimeout(() => setSyncFeedback(null), 4500);
+  };
+
+  // Generate Order No for all pending rows in Product Order
+  const handleGenerateAllPendingOrderNo = () => {
+    let counter = 1752;
+    const nowStr = new Date().toLocaleString('en-IN');
+    let countGenerated = 0;
+
+    setRawResponses(prev =>
+      prev.map(row => {
+        if (!row.orderNo || row.orderNo.trim() === '') {
+          countGenerated++;
+          const genNo = `DLFSO2526-0${counter++}`;
+          return {
+            ...row,
+            orderNo: genNo,
+            orderNoTimestamp: nowStr,
+            statusAN: row.statusAN || 'Open'
+          };
+        }
+        return row;
+      })
+    );
+
+    setSyncFeedback(
+      `Generated Order Numbers for ${countGenerated} pending orders! All flowed to Product Automation (Active Orders) with Col AN default "Open".`
+    );
+    setTimeout(() => setSyncFeedback(null), 4500);
+  };
+
+  // Add new row into Product Order
+  const handleAddNewProductOrderRow = (newRow: ProductOrderRow) => {
+    setRawResponses(prev => [newRow, ...prev]);
+    setSyncFeedback(`New Order ${newRow.customerPO} (${newRow.referenceNo}) added to Product Order!`);
+    setTimeout(() => setSyncFeedback(null), 4000);
+  };
+
+  // Update row field in Product Order
+  const handleUpdateProductOrderRow = (orderId: string, field: keyof ProductOrderRow, value: any) => {
+    setRawResponses(prev =>
+      prev.map(row => (row.orderId === orderId ? { ...row, [field]: value } : row))
+    );
+  };
+
   // Update Order No (Col X)
   const handleSaveOrderNo = () => {
     if (!editingOrderNo) return;
@@ -491,7 +572,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         ].map(v => (v || '').trim()).join('_');
 
         if (key === editingOrderNo.key) {
-          return { ...row, orderNo: editingOrderNo.value };
+          return {
+            ...row,
+            orderNo: editingOrderNo.value,
+            orderNoTimestamp: new Date().toLocaleString('en-IN'),
+            statusAN: row.statusAN || 'Open'
+          };
         }
         return row;
       })
@@ -677,6 +763,14 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     const result: GroupedOrder[] = [];
 
     groupedOrders.forEach(order => {
+      // In "Product Automation (Active Orders)" and "Closed Orders":
+      // An order ONLY flows in once its Order Number has been assigned/entered in "Product Order"!
+      if (activeSheetTab === 'automation' || activeSheetTab === 'closed') {
+        if (!order.orderNo || order.orderNo.trim() === '') {
+          return;
+        }
+      }
+
       // Filter items according to tab, status filter, and column filters
       const relevantItems = order.items.filter(item => {
         const itemStatus = item.statusAN || 'Open';
@@ -776,11 +870,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
 
   // Aggregate metrics
   const totalOrdersCount = groupedOrders.length;
+  const pendingOnCount = rawResponses.filter(r => !r.orderNo || r.orderNo.trim() === '').length;
   const activeItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') !== 'Closed').length;
   const closedItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') === 'Closed').length;
 
-  const activeOrdersCount = groupedOrders.filter(o => o.items.some(it => (it.statusAN || 'Open') !== 'Closed')).length;
-  const closedOrdersCount = groupedOrders.filter(o => o.items.length > 0 && o.items.every(it => (it.statusAN || 'Open') === 'Closed')).length;
+  const activeOrdersCount = groupedOrders.filter(o => o.orderNo && o.orderNo.trim() !== '' && o.items.some(it => (it.statusAN || 'Open') !== 'Closed')).length;
+  const closedOrdersCount = groupedOrders.filter(o => o.orderNo && o.orderNo.trim() !== '' && o.items.length > 0 && o.items.every(it => (it.statusAN || 'Open') === 'Closed')).length;
   const totalItemRows = filteredOrders.reduce((sum, ord) => sum + ord.items.length, 0);
   const totalOrderQty = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + it.qty, 0), 0);
   const totalDispatched = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + (it.dispatchQty || 0), 0), 0);
@@ -1068,8 +1163,22 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         )}
 
         {/* THE MAIN SPREADSHEET TABLE GRID CONTAINER (Vertical & Horizontal Scroll Box with Freeze Panes) */}
-        <div className={`overflow-x-auto overflow-y-auto ${isFullWidth ? 'h-[calc(100vh-140px)] max-h-[89vh]' : 'h-[640px] max-h-[74vh]'} select-text relative fms-sheet-scroll border border-slate-300 rounded-lg shadow-inner bg-white`}>
-          <table className="w-full border-collapse text-xs text-left">
+        {activeSheetTab === 'product_order' ? (
+          <ProductOrderView
+            orders={rawResponses}
+            searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
+            isFullWidth={isFullWidth}
+            onGenerateOrderNo={handleGenerateOrderNo}
+            onGenerateAllPending={handleGenerateAllPendingOrderNo}
+            onDeleteRow={handleDeleteItem}
+            onUpdateRow={handleUpdateProductOrderRow}
+            onNavigateToAutomation={() => setActiveSheetTab('automation')}
+            onAddNewRow={handleAddNewProductOrderRow}
+          />
+        ) : (
+          <div className={`overflow-x-auto overflow-y-auto ${isFullWidth ? 'h-[calc(100vh-140px)] max-h-[89vh]' : 'h-[640px] max-h-[74vh]'} select-text relative fms-sheet-scroll border border-slate-300 rounded-lg shadow-inner bg-white`}>
+            <table className="w-full border-collapse text-xs text-left">
             {/* The Sticky Column Letters Header with Rich Fill Colors */}
             <thead className={`${freezeRows === 1 ? 'sticky top-0 z-30' : ''} select-none border-b-2 border-slate-900`}>
               <tr className="font-mono text-[11px]">
@@ -1230,6 +1339,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
             </tbody>
           </table>
         </div>
+        )}
 
         {/* COLUMN HEADER FILTER POPOVER (Works on EVERY Column with HIDE THIS COLUMN Option) */}
         {activeFilterCol && (
@@ -1336,6 +1446,23 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         <div className="bg-slate-200 border-t border-slate-300 px-3 py-2 flex flex-wrap items-center justify-between gap-3 select-none">
           {/* Tabs */}
           <div className="flex items-center gap-1">
+            {/* Tab 1: Product Order (28-Col Flat Sheet - No Merges) */}
+            <button
+              onClick={() => setActiveSheetTab('product_order')}
+              className={`px-3.5 py-1.5 text-xs font-bold rounded-t-md transition-colors flex items-center gap-1.5 ${
+                activeSheetTab === 'product_order'
+                  ? 'bg-white text-blue-900 shadow-sm border-t-2 border-blue-600'
+                  : 'bg-slate-300/80 text-slate-700 hover:bg-slate-300'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
+              <span>Product Order</span>
+              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800 font-mono font-bold">
+                {rawResponses.length} rows {pendingOnCount > 0 ? `· ${pendingOnCount} Pending O.N` : ''}
+              </span>
+            </button>
+
+            {/* Tab 2: Product Automation (Active Orders - Merged Grid) */}
             <button
               onClick={() => setActiveSheetTab('automation')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-t-md transition-colors flex items-center gap-1.5 ${
@@ -1344,13 +1471,14 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                   : 'bg-slate-300/80 text-slate-700 hover:bg-slate-300'
               }`}
             >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              <Layers className="w-3.5 h-3.5 text-emerald-600" />
               <span>Product Automation (Active Orders)</span>
-              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800">
+              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-mono font-bold">
                 {activeOrdersCount}
               </span>
             </button>
 
+            {/* Tab 3: Closed Orders (Archive) */}
             <button
               onClick={() => setActiveSheetTab('closed')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-t-md transition-colors flex items-center gap-1.5 ${
@@ -1361,23 +1489,8 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
             >
               <Archive className="w-3.5 h-3.5 text-indigo-600" />
               <span>Closed Orders (Archive)</span>
-              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800">
+              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800 font-mono font-bold">
                 {closedOrdersCount}
-              </span>
-            </button>
-
-            <button
-              onClick={() => setActiveSheetTab('all')}
-              className={`px-3.5 py-1.5 text-xs font-bold rounded-t-md transition-colors flex items-center gap-1.5 ${
-                activeSheetTab === 'all'
-                  ? 'bg-white text-slate-900 shadow-sm border-t-2 border-slate-700'
-                  : 'bg-slate-300/80 text-slate-700 hover:bg-slate-300'
-              }`}
-            >
-              <Table className="w-3.5 h-3.5 text-slate-600" />
-              <span>All Orders (Merged Grid)</span>
-              <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-800">
-                {totalOrdersCount}
               </span>
             </button>
 
