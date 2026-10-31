@@ -389,8 +389,8 @@ export const fmsColumnMapping: ColumnMapItem[] = [
   { sheetCol: "AL", colIndex1Based: 38, arrayIndex0Based: 37, name: "Follow-up 2 Remark", category: "header-merge", description: "Follow-up 2 discussion summary", example: "Dispatch vehicle booked" },
   { sheetCol: "AM", colIndex1Based: 39, arrayIndex0Based: 38, name: "LR- Number", category: "header-merge", description: "Lorry Receipt / Consignment Note No", example: "LR-789012" },
 
-  // AN to AS: Order Closure & Dispatch WhatsApp/Email (Vertically Merged per order)
-  { sheetCol: "AN", colIndex1Based: 40, arrayIndex0Based: 39, name: "Open / Close", category: "header-merge", description: "Order lifecycle: Dropdown with [Open, In-Progress, Closed]", example: "Open / In-Progress / Closed" },
+  // AN to AS: Order Closure & Dispatch WhatsApp/Email
+  { sheetCol: "AN", colIndex1Based: 40, arrayIndex0Based: 39, name: "Open / Close", category: "item-row", description: "Item lifecycle: Dropdown with [Open, In-Progress, Closed] per product item row", example: "Open / In-Progress / Closed" },
   { sheetCol: "AO", colIndex1Based: 41, arrayIndex0Based: 40, name: "Delivered Whatspp Msg", category: "header-merge", description: "Status: Message Sent / Pending", example: "Message Sent" },
   { sheetCol: "AP", colIndex1Based: 42, arrayIndex0Based: 41, name: "Whatspp Link", category: "header-merge", description: "HYPERLINK to send WhatsApp dispatch text for all items", example: "Sent Messages" },
   { sheetCol: "AQ", colIndex1Based: 43, arrayIndex0Based: 42, name: "Delivery Email", category: "header-merge", description: "Target dispatch email address", example: "purchase@client.com" },

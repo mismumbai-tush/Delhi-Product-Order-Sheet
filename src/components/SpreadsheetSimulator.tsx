@@ -51,11 +51,12 @@ import {
   Minimize2
 } from 'lucide-react';
 
-const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v6';
-const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v6';
-const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v6';
-const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v6';
-const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v6';
+const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v7';
+const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v7';
+const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v7';
+const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v7';
+const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v7';
+const LOCAL_STORAGE_CONFIRM_KEY = 'ginza_fms_confirm_msg_v7';
 
 interface SpreadsheetSimulatorProps {
   isFullWidth?: boolean;
@@ -99,10 +100,10 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       const saved = localStorage.getItem(LOCAL_STORAGE_COL_VISIBILITY);
       if (saved) return JSON.parse(saved);
     } catch (e) {}
-    // Default: Show core 26 columns + AN, AO, AP (Hide extra optional follow-ups initially for cleaner view)
+    // Default: Show core 26 columns + AE, AF, AN, AO, AP (Hide extra optional follow-ups initially for cleaner view)
     const initial: Record<string, boolean> = {};
     fmsColumnMapping.forEach(col => {
-      const isExtra = ['AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AQ', 'AR', 'AS'].includes(col.sheetCol);
+      const isExtra = ['AA', 'AB', 'AC', 'AD', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AQ', 'AR', 'AS'].includes(col.sheetCol);
       initial[col.sheetCol] = !isExtra;
     });
     return initial;
@@ -151,6 +152,19 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   });
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
+  // Col AE: Instant Confirmation Msg Status ("Message Sent" vs "Pending")
+  const [aeStatuses, setAeStatuses] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_CONFIRM_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Message Sent',
+      '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'Message Sent',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Message Sent'
+    };
+  });
+
   // Col AO: Dispatch Status ("Message Sent" vs "Pending")
   const [aoStatuses, setAoStatuses] = useState<Record<string, string>>({
     '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Message Sent',
@@ -181,9 +195,13 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   // Status message for simulation feedback
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
 
-  // Modal for previewing WhatsApp dispatch link
+  // Modal for previewing WhatsApp dispatch link (Col AO -> AP)
   const [whatsAppModalOrder, setWhatsAppModalOrder] = useState<GroupedOrder | null>(null);
   const [copiedWhatsAppMsg, setCopiedWhatsAppMsg] = useState(false);
+
+  // Modal for previewing Instant Confirmation WhatsApp (Col AE -> AF)
+  const [confirmWhatsAppModalOrder, setConfirmWhatsAppModalOrder] = useState<GroupedOrder | null>(null);
+  const [copiedConfirmMsg, setCopiedConfirmMsg] = useState(false);
 
   // Modal for New Order entry
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
@@ -218,6 +236,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       localStorage.setItem(LOCAL_STORAGE_FREEZE_CONFIG, JSON.stringify({ cols: freezeColumns, rows: freezeRows }));
     } catch (e) {}
   }, [freezeColumns, freezeRows]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_CONFIRM_KEY, JSON.stringify(aeStatuses));
+    } catch (e) {}
+  }, [aeStatuses]);
 
   // Group raw responses into distinct orders
   const groupedOrders: GroupedOrder[] = useMemo(() => {
@@ -272,33 +296,33 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         deliveryDate: row.deliveryDate,
         dispatchQty: dispatch,
         balanceQty: balance,
-        statusAN: (row.statusAN as any) || map[orderKey].statusAN || 'Open'
+        statusAN: (row.statusAN as any) || 'Open'
       });
     });
 
     return Object.values(map);
   }, [rawResponses, dispatchRecords]);
 
-  // Handle Status AN Dropdown Change: 'Open' | 'In-Progress' | 'Closed'
-  const handleStatusChange = (orderKey: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => {
+  // Handle Status AN Dropdown Change PER ITEM: 'Open' | 'In-Progress' | 'Closed'
+  const handleItemStatusChange = (orderId: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => {
+    let affectedItemName = '';
     setRawResponses(prev =>
       prev.map(row => {
-        const key = [
-          row.customerPO,
-          row.customerName,
-          row.customerEmail,
-          row.customerNumber,
-          row.orderDate
-        ].map(v => (v || '').trim()).join('_');
-
-        if (key === orderKey) {
+        if (row.orderId === orderId) {
+          affectedItemName = row.itemName;
           return { ...row, statusAN: newStatus };
         }
         return row;
       })
     );
 
-    setSyncFeedback(`Col AN updated to "${newStatus}". ${newStatus === 'Closed' ? 'Order moved to "Closed Orders" tab!' : 'Active in "Product Automation".'}`);
+    setSyncFeedback(
+      `Item "${affectedItemName || orderId}" Col AN set to "${newStatus}". ${
+        newStatus === 'Closed'
+          ? 'Item moved to "Closed Orders" tab archive!'
+          : 'Active in "Product Automation".'
+      }`
+    );
     setTimeout(() => setSyncFeedback(null), 4000);
   };
 
@@ -648,18 +672,55 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   };
 
   // Filter orders based on activeSheetTab & statusFilter & search & column filters
+  // When an order has multiple items, closed items show in "Closed Orders" and active items in "Product Automation"!
   const filteredOrders = useMemo(() => {
-    let result = groupedOrders.filter(order => {
-      // Tab filter
-      if (activeSheetTab === 'automation') {
-        if (order.statusAN === 'Closed') return false;
-      } else if (activeSheetTab === 'closed') {
-        if (order.statusAN !== 'Closed') return false;
-      }
+    const result: GroupedOrder[] = [];
 
-      // Dropdown status filter
-      if (statusFilter !== 'ALL' && order.statusAN !== statusFilter) {
-        return false;
+    groupedOrders.forEach(order => {
+      // Filter items according to tab, status filter, and column filters
+      const relevantItems = order.items.filter(item => {
+        const itemStatus = item.statusAN || 'Open';
+
+        // 1. Tab filter
+        if (activeSheetTab === 'automation') {
+          if (itemStatus === 'Closed') return false;
+        } else if (activeSheetTab === 'closed') {
+          if (itemStatus !== 'Closed') return false;
+        }
+
+        // 2. Toolbar Status dropdown filter
+        if (statusFilter !== 'ALL' && itemStatus !== statusFilter) {
+          return false;
+        }
+
+        // 3. Item-level Column Filters (F to N, Y, Z, AN)
+        if (colFilters['F'] && colFilters['F'].length > 0 && !colFilters['F'].includes(item.unit)) return false;
+        if (colFilters['G'] && colFilters['G'].length > 0 && !colFilters['G'].includes(item.itemName)) return false;
+        if (colFilters['H'] && colFilters['H'].length > 0 && !colFilters['H'].includes(item.color)) return false;
+        if (colFilters['I'] && colFilters['I'].length > 0 && !colFilters['I'].includes(item.width)) return false;
+        if (colFilters['AN'] && colFilters['AN'].length > 0 && !colFilters['AN'].includes(itemStatus)) return false;
+
+        return true;
+      });
+
+      // If no items in this order match the current tab/filter, skip this order
+      if (relevantItems.length === 0) return;
+
+      // Header-level Column Filters (A to E, O to X, AE, AF, AO, AP)
+      for (const [colKey, selectedVals] of Object.entries(colFilters)) {
+        if (!selectedVals || selectedVals.length === 0) continue;
+        if (colKey === 'A' && !selectedVals.includes(order.timestamp)) return;
+        if (colKey === 'B' && !selectedVals.includes(order.customerPO)) return;
+        if (colKey === 'C' && !selectedVals.includes(order.customerName)) return;
+        if (colKey === 'D' && !selectedVals.includes(order.customerEmail)) return;
+        if (colKey === 'E' && !selectedVals.includes(order.orderDate)) return;
+        if (colKey === 'S' && !selectedVals.includes(order.transporterName)) return;
+        if (colKey === 'T' && !selectedVals.includes(order.salesPerson)) return;
+        if (colKey === 'U' && !selectedVals.includes(order.accountStatus)) return;
+        if (colKey === 'V' && !selectedVals.includes(order.approvalStatus)) return;
+        if (colKey === 'X' && !selectedVals.includes(order.orderNo || 'Set SO#')) return;
+        if (colKey === 'AE' && !selectedVals.includes(aeStatuses[order.orderKey] || 'Pending')) return;
+        if (colKey === 'AO' && !selectedVals.includes(aoStatuses[order.orderKey] || 'Pending')) return;
       }
 
       // Global Search term
@@ -668,44 +729,20 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         const matchesPO = (order.customerPO || '').toLowerCase().includes(q);
         const matchesName = (order.customerName || '').toLowerCase().includes(q);
         const matchesOrderNo = (order.orderNo || '').toLowerCase().includes(q);
-        const matchesItem = order.items.some(
-          it => (it.itemName || '').toLowerCase().includes(q) || (it.color || '').toLowerCase().includes(q)
-        );
         const matchesSales = (order.salesPerson || '').toLowerCase().includes(q);
         const matchesTransporter = (order.transporterName || '').toLowerCase().includes(q);
-        if (!matchesPO && !matchesName && !matchesOrderNo && !matchesItem && !matchesSales && !matchesTransporter) {
-          return false;
+        const matchesAnyItem = relevantItems.some(
+          it => (it.itemName || '').toLowerCase().includes(q) || (it.color || '').toLowerCase().includes(q)
+        );
+        if (!matchesPO && !matchesName && !matchesOrderNo && !matchesSales && !matchesTransporter && !matchesAnyItem) {
+          return;
         }
       }
 
-      // Column Filters on EVERY Column
-      for (const [colKey, selectedVals] of Object.entries(colFilters)) {
-        if (!selectedVals || selectedVals.length === 0) continue;
-
-        let match = false;
-        if (colKey === 'A') match = selectedVals.includes(order.timestamp);
-        else if (colKey === 'B') match = selectedVals.includes(order.customerPO);
-        else if (colKey === 'C') match = selectedVals.includes(order.customerName);
-        else if (colKey === 'D') match = selectedVals.includes(order.customerEmail);
-        else if (colKey === 'E') match = selectedVals.includes(order.orderDate);
-        else if (colKey === 'F') match = order.items.some(it => selectedVals.includes(it.unit));
-        else if (colKey === 'G') match = order.items.some(it => selectedVals.includes(it.itemName));
-        else if (colKey === 'H') match = order.items.some(it => selectedVals.includes(it.color));
-        else if (colKey === 'I') match = order.items.some(it => selectedVals.includes(it.width));
-        else if (colKey === 'S') match = selectedVals.includes(order.transporterName);
-        else if (colKey === 'T') match = selectedVals.includes(order.salesPerson);
-        else if (colKey === 'U') match = selectedVals.includes(order.accountStatus);
-        else if (colKey === 'V') match = selectedVals.includes(order.approvalStatus);
-        else if (colKey === 'X') match = selectedVals.includes(order.orderNo || 'Set SO#');
-        else if (colKey === 'AN') match = selectedVals.includes(order.statusAN || 'Open');
-        else {
-          match = true;
-        }
-
-        if (!match) return false;
-      }
-
-      return true;
+      result.push({
+        ...order,
+        items: relevantItems
+      });
     });
 
     // Sorting
@@ -723,9 +760,6 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         } else if (sortConfig.column === 'K') {
           valA = a.items.reduce((s, it) => s + it.qty, 0);
           valB = b.items.reduce((s, it) => s + it.qty, 0);
-        } else if (sortConfig.column === 'AN') {
-          valA = a.statusAN || 'Open';
-          valB = b.statusAN || 'Open';
         } else {
           valA = a.customerPO;
           valB = b.customerPO;
@@ -738,12 +772,15 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     }
 
     return result;
-  }, [groupedOrders, activeSheetTab, statusFilter, searchTerm, colFilters, sortConfig]);
+  }, [groupedOrders, activeSheetTab, statusFilter, searchTerm, colFilters, sortConfig, aeStatuses, aoStatuses]);
 
   // Aggregate metrics
   const totalOrdersCount = groupedOrders.length;
-  const activeOrdersCount = groupedOrders.filter(o => o.statusAN !== 'Closed').length;
-  const closedOrdersCount = groupedOrders.filter(o => o.statusAN === 'Closed').length;
+  const activeItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') !== 'Closed').length;
+  const closedItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') === 'Closed').length;
+
+  const activeOrdersCount = groupedOrders.filter(o => o.items.some(it => (it.statusAN || 'Open') !== 'Closed')).length;
+  const closedOrdersCount = groupedOrders.filter(o => o.items.length > 0 && o.items.every(it => (it.statusAN || 'Open') === 'Closed')).length;
   const totalItemRows = filteredOrders.reduce((sum, ord) => sum + ord.items.length, 0);
   const totalOrderQty = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + it.qty, 0), 0);
   const totalDispatched = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + (it.dispatchQty || 0), 0), 0);
@@ -1174,12 +1211,15 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
               ) : (
                 renderSpreadsheetRows(filteredOrders, viewMode === 'merged', visibleCols, freezeColumns, {
                   onDispatchChange: handleDispatchChange,
-                  onStatusChange: handleStatusChange,
+                  onItemStatusChange: handleItemStatusChange,
                   onDeleteOrder: handleDeleteOrder,
                   onDeleteItem: handleDeleteItem,
                   onOpenOrderNoModal: setEditingOrderNo,
                   onOpenAddItemModal: setAddingItemToOrder,
+                  onOpenConfirmWhatsAppModal: setConfirmWhatsAppModalOrder,
                   onOpenWhatsAppModal: setWhatsAppModalOrder,
+                  aeStatuses,
+                  setAeStatuses,
                   aoStatuses,
                   setAoStatuses,
                   lrNumbers,
@@ -1796,6 +1836,132 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
           </div>
         );
       })()}
+
+      {/* MODAL: INSTANT CONFIRMATION WHATSAPP PREVIEW (Col AE ➔ AF) */}
+      {confirmWhatsAppModalOrder && (() => {
+        const cleanPhone = (confirmWhatsAppModalOrder.customerNumber || '').replace(/[^0-9]/g, '');
+        const displayOrderNo = confirmWhatsAppModalOrder.orderNo?.trim() || confirmWhatsAppModalOrder.customerPO?.trim() || 'Pending';
+        const NL = '\n';
+        const NL2 = '\n\n';
+
+        const itemBlocks = confirmWhatsAppModalOrder.items.map((it, idx) => {
+          const itemHeader = confirmWhatsAppModalOrder.items.length > 1 ? `*Item ${idx + 1}:*${NL}` : '';
+          return (
+            itemHeader +
+            `Item Name: ${it.itemName}${NL}` +
+            `Color: ${it.color}${NL}` +
+            `Qnt: ${it.qty}${NL}` +
+            `Price: ${it.rate}${NL}` +
+            `Delivery Date: ${it.deliveryDate || ''}`
+          );
+        });
+
+        const itemsText = itemBlocks.join(`${NL}--------------------------${NL}`);
+        let addressLine = '';
+        if (confirmWhatsAppModalOrder.deliveryAddress && confirmWhatsAppModalOrder.deliveryAddress.trim()) {
+          addressLine = `Delivery Address: ${confirmWhatsAppModalOrder.deliveryAddress.trim()}${NL}`;
+        }
+
+        const messageText =
+          `Dear ${confirmWhatsAppModalOrder.customerName || 'Customer'},${NL2}` +
+          `Thank you for choosing Ginza Industries Ltd.${NL2}` +
+          `Your Order has been successfully received and is now being processed.${NL2}` +
+          `*Order Summary*${NL2}` +
+          `Order Date: ${confirmWhatsAppModalOrder.orderDate}${NL}` +
+          `Order Number: ${displayOrderNo}${NL}` +
+          addressLine +
+          `--------------------------${NL}` +
+          itemsText + `${NL}` +
+          `--------------------------${NL2}` +
+          `Thank you for your continued support & trust in Soie and Ginza Industries Limited.`;
+
+        const waUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(messageText)}`;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
+              <div className="px-5 py-4 bg-emerald-700 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-1.5 rounded-lg bg-emerald-800 text-white">
+                    <MessageSquare className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <h3 className="font-bold text-sm">Order Confirmation WhatsApp Preview (Col AE ➔ AF)</h3>
+                    <p className="text-[11px] text-emerald-100">Formula generated via HYPERLINK + ENCODEURL</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setConfirmWhatsAppModalOrder(null)}
+                  className="p-1 rounded-lg text-emerald-100 hover:text-white hover:bg-emerald-800 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+                <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-3 rounded-lg border border-slate-200">
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">Customer &amp; Phone (Col P)</span>
+                    <span className="font-bold text-slate-800">{confirmWhatsAppModalOrder.customerName}</span>
+                    <span className="font-mono text-emerald-700 block">{cleanPhone || '8800421410'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[11px]">Order No &amp; Date (Col X &amp; E)</span>
+                    <span className="font-bold text-slate-800">{displayOrderNo}</span>
+                    <span className="text-slate-600 block">{confirmWhatsAppModalOrder.orderDate}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Order Confirmation Message (Instant Booking Notice):
+                    </label>
+                    <span className="text-[11px] text-emerald-700 font-medium bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      {confirmWhatsAppModalOrder.items.length} Product Items
+                    </span>
+                  </div>
+                  <div className="bg-[#eef8f2] border border-[#c1e7ce] p-3.5 rounded-xl font-mono text-xs whitespace-pre-wrap text-slate-800 leading-relaxed shadow-inner">
+                    {messageText}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(messageText);
+                    setCopiedConfirmMsg(true);
+                    setTimeout(() => setCopiedConfirmMsg(false), 2500);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  {copiedConfirmMsg ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedConfirmMsg ? 'Copied Message!' : 'Copy Text'}
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setConfirmWhatsAppModalOrder(null)}
+                    className="px-3.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-800 rounded-lg"
+                  >
+                    Close
+                  </button>
+                  <a
+                    href={waUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 transition-colors shadow-xs"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>Send on WhatsApp</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -1808,12 +1974,15 @@ function renderSpreadsheetRows(
   freezeColumns: number,
   handlers: {
     onDispatchChange: (orderKey: string, item: any, valStr: string) => void;
-    onStatusChange: (orderKey: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => void;
+    onItemStatusChange: (orderId: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => void;
     onDeleteOrder: (orderKey: string, poName: string) => void;
     onDeleteItem: (itemOrderId: string) => void;
     onOpenOrderNoModal: (data: { key: string; po: string; value: string }) => void;
     onOpenAddItemModal: (order: GroupedOrder) => void;
+    onOpenConfirmWhatsAppModal: (order: GroupedOrder) => void;
     onOpenWhatsAppModal: (order: GroupedOrder) => void;
+    aeStatuses: Record<string, string>;
+    setAeStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     aoStatuses: Record<string, string>;
     setAoStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     lrNumbers: Record<string, string>;
@@ -2240,14 +2409,41 @@ function renderSpreadsheetRows(
                   Delivered
                 </td>
               )}
+              {/* Col AE: Instant Confirmation Msg */}
               {visibleCols['AE'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle text-[11px] ${cellBottomBorder}`}>
-                  {handlers.aoStatuses[currentOrderKey] || 'Pending'}
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}>
+                  <select
+                    value={handlers.aeStatuses[currentOrderKey] || 'Pending'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      handlers.setAeStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
+                      handlers.setSyncFeedback(`Col AE Confirmation set to "${val}". ${val === 'Message Sent' ? 'Instant WhatsApp link active in Col AF!' : 'Pending status.'}`);
+                      setTimeout(() => handlers.setSyncFeedback(null), 3500);
+                    }}
+                    className="text-[10px] bg-white border border-blue-300 rounded px-1.5 py-0.5 font-medium text-slate-800 focus:ring-1 focus:ring-blue-500 focus:outline-none h-6"
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="Message Sent">Message Sent</option>
+                  </select>
                 </td>
               )}
+
+              {/* Col AF: Whatspp Link (Instant Confirmation AE ➔ AF) */}
               {visibleCols['AF'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-emerald-600 align-middle text-center text-[11px] ${cellBottomBorder}`}>
-                  <span className="underline cursor-pointer">Chat</span>
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}>
+                  {(handlers.aeStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
+                    <button
+                      onClick={() => handlers.onOpenConfirmWhatsAppModal(order)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
+                      title="Send Instant Order Confirmation WhatsApp (AE ➔ AF)"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      <span>Send WA</span>
+                      <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
+                    </button>
+                  ) : (
+                    <span className="text-slate-400 font-mono text-[10px] italic">—</span>
+                  )}
                 </td>
               )}
               {visibleCols['AG'] && (
@@ -2298,20 +2494,21 @@ function renderSpreadsheetRows(
             </>
           )}
 
-          {/* COLUMN AN: THE EXACT DROPDOWN LIST [Open / In-Progress / Closed] */}
-          {showHeaderCols && visibleCols['AN'] && (
+          {/* COLUMN AN: OPEN / CLOSE (INDIVIDUAL PRODUCT ITEM ROW - NEVER MERGED, LIKE F-N AND Y-Z) */}
+          {visibleCols['AN'] && (
             <td
-              rowSpan={rowSpan}
-              className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-sky-50/30 whitespace-nowrap ${cellBottomBorder}`}
+              className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-sky-50/20 whitespace-nowrap ${
+                useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''
+              }`}
             >
               <div className="flex items-center justify-center">
                 <select
-                  value={currentStatus}
-                  onChange={(e) => handlers.onStatusChange(currentOrderKey, e.target.value as any)}
-                  className={`text-[11px] font-bold rounded px-2 py-0.5 border transition-all cursor-pointer focus:outline-none focus:ring-1 h-6 shadow-2xs ${
-                    currentStatus === 'Closed'
+                  value={item.statusAN || 'Open'}
+                  onChange={(e) => handlers.onItemStatusChange(item.id, e.target.value as any)}
+                  className={`text-[11px] font-bold rounded px-1.5 py-0.5 border transition-all cursor-pointer focus:outline-none focus:ring-1 h-6 shadow-2xs ${
+                    (item.statusAN || 'Open') === 'Closed'
                       ? 'bg-emerald-100 text-emerald-900 border-emerald-400 focus:ring-emerald-500'
-                      : currentStatus === 'In-Progress'
+                      : (item.statusAN || 'Open') === 'In-Progress'
                       ? 'bg-amber-100 text-amber-900 border-amber-400 focus:ring-amber-500'
                       : 'bg-sky-100 text-sky-900 border-sky-400 focus:ring-sky-500'
                   }`}
@@ -2324,53 +2521,54 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col AO: Delivered Whatspp Msg */}
-          {showHeaderCols && visibleCols['AO'] && (
-            <td
-              rowSpan={rowSpan}
-              className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-purple-50/20 whitespace-nowrap ${cellBottomBorder}`}
-            >
-              <select
-                value={handlers.aoStatuses[currentOrderKey] || 'Pending'}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  handlers.setAoStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
-                  handlers.setSyncFeedback(`Col AO set to "${val}". ${val === 'Message Sent' ? 'WhatsApp button activated in Col AP!' : 'Pending status.'}`);
-                  setTimeout(() => handlers.setSyncFeedback(null), 3500);
-                }}
-                className="text-[10px] bg-white border border-purple-300 rounded px-1.5 py-0.5 font-medium text-slate-800 focus:ring-1 focus:ring-purple-500 focus:outline-none h-6"
-              >
-                <option value="Pending">Pending</option>
-                <option value="Message Sent">Message Sent</option>
-              </select>
-            </td>
-          )}
-
-          {/* Col AP: Whatspp Link */}
-          {showHeaderCols && visibleCols['AP'] && (
-            <td
-              rowSpan={rowSpan}
-              className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}
-            >
-              {(handlers.aoStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
-                <button
-                  onClick={() => handlers.onOpenWhatsAppModal(order)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
-                  title="Send WhatsApp Dispatch Notice"
-                >
-                  <MessageSquare className="w-3 h-3" />
-                  <span>Send WA</span>
-                  <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
-                </button>
-              ) : (
-                <span className="text-slate-400 font-mono text-[10px] italic">—</span>
-              )}
-            </td>
-          )}
-
-          {/* COLUMNS AQ TO AS IF VISIBLE */}
+          {/* COLUMNS AO TO AS: DELIVERED WHATSAPP & EMAILS (VERTICALLY MERGED PER ORDER) */}
           {showHeaderCols && (
             <>
+              {/* Col AO: Delivered Whatspp Msg */}
+              {visibleCols['AO'] && (
+                <td
+                  rowSpan={rowSpan}
+                  className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-purple-50/20 whitespace-nowrap ${cellBottomBorder}`}
+                >
+                  <select
+                    value={handlers.aoStatuses[currentOrderKey] || 'Pending'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      handlers.setAoStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
+                      handlers.setSyncFeedback(`Col AO set to "${val}". ${val === 'Message Sent' ? 'WhatsApp button activated in Col AP!' : 'Pending status.'}`);
+                      setTimeout(() => handlers.setSyncFeedback(null), 3500);
+                    }}
+                    className="text-[10px] bg-white border border-purple-300 rounded px-1.5 py-0.5 font-medium text-slate-800 focus:ring-1 focus:ring-purple-500 focus:outline-none h-6"
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="Message Sent">Message Sent</option>
+                  </select>
+                </td>
+              )}
+
+              {/* Col AP: Whatspp Link */}
+              {visibleCols['AP'] && (
+                <td
+                  rowSpan={rowSpan}
+                  className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}
+                >
+                  {(handlers.aoStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
+                    <button
+                      onClick={() => handlers.onOpenWhatsAppModal(order)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
+                      title="Send WhatsApp Dispatch Notice"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      <span>Send WA</span>
+                      <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
+                    </button>
+                  ) : (
+                    <span className="text-slate-400 font-mono text-[10px] italic">—</span>
+                  )}
+                </td>
+              )}
+
+              {/* COLUMNS AQ TO AS IF VISIBLE */}
               {visibleCols['AQ'] && (
                 <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle text-[10px] ${cellBottomBorder}`}>
                   {order.customerEmail || '—'}
