@@ -11,7 +11,7 @@ export interface OrderItem {
   deliveryDate: string;  // Col L (12)
   dispatchQty?: number;  // Col U (21) - Manual user entry
   balanceQty?: number;   // Col V (22) - I - U
-  statusAN?: 'Open' | 'In-Progress' | 'Closed'; // Col AM (39) / Col W (23)
+  statusAN?: 'Open' | 'In-Progress' | 'Closed' | 'Complete' | string; // Col AM (39) / Col W (23)
 }
 
 export interface ProductOrderRow {
@@ -47,7 +47,7 @@ export interface ProductOrderRow {
   branchHeadEmail?: string;
   transporterName?: string;   // Col AK (37): Transport Name
   lrNumber?: string;          // Col AL (38): LR- Number
-  statusAN?: 'Open' | 'In-Progress' | 'Closed'; // Col AM (39): Open / Close
+  statusAN?: 'Open' | 'In-Progress' | 'Closed' | 'Complete' | string; // Col AM (39): Open / Close
   dispatchQty?: number;       // Col U (21): Dispatch Qnt
   balanceQty?: number;        // Col V (22): Balance Qnt
 }
@@ -77,7 +77,7 @@ export interface GroupedOrder {
   branchHeadEmail?: string;
   orderNo: string;
   orderNoTimestamp?: string;
-  statusAN?: 'Open' | 'In-Progress' | 'Closed';
+  statusAN?: 'Open' | 'In-Progress' | 'Closed' | 'Complete' | string;
 }
 
 export interface ColumnMapItem {

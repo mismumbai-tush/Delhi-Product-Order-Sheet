@@ -55,7 +55,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "DLFSO2526-01748",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "In-Progress"
+    statusAN: "Complete",
+    dispatchQty: 160,
+    balanceQty: 0
   },
   // 2. Mittal Hosiery House (Ghaziabad) - PO 5278
   {
@@ -88,7 +90,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "TDN/03590/25-26",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "Open"
+    statusAN: "In-Progress",
+    dispatchQty: 4000,
+    balanceQty: 8000
   },
   // 3. M G Enterprises (Delhi) - PO N/A
   {
@@ -121,7 +125,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "TDN/03590/25-26",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "Open"
+    statusAN: "Open",
+    dispatchQty: 0,
+    balanceQty: 6400
   },
   // 4. Ganpati Dupatta House (Amritsar) - PO N/A
   {
@@ -154,7 +160,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "DLFSO2526-01749",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "In-Progress"
+    statusAN: "In-Progress",
+    dispatchQty: 413,
+    balanceQty: 67
   },
   // 5. Maa Veshano Hosiery (Delhi) - PO N/A
   {
@@ -187,7 +195,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "TDN/03591/25-26",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "In-Progress"
+    statusAN: "In-Progress",
+    dispatchQty: 9268,
+    balanceQty: 732
   },
   // 6. Nandani Lace House (Delhi) - PO N/A
   {
@@ -220,7 +230,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "DLFSO2526-01750",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "Open"
+    statusAN: "Open",
+    dispatchQty: 0,
+    balanceQty: 300
   },
   // 7. Crown Fab.& Lace House Pvt. Ltd. - PO N/A
   {
@@ -253,7 +265,9 @@ export const initialRawResponses: ProductOrderRow[] = [
     branchHeadEmail: "vinay.chhajer@ginzalimited.com",
     orderNo: "DLFSO2526-01751",
     orderNoTimestamp: "10/23/2026 11:36:28",
-    statusAN: "Open"
+    statusAN: "Complete",
+    dispatchQty: 250,
+    balanceQty: 0
   },
   // 8. Nandani Lace House (Delhi) - PO 5281 - Item 1
   {

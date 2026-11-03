@@ -74,6 +74,13 @@ const LOCAL_STORAGE_COL_AI_KEY = 'ginza_fms_col_ai_v11';
 const LOCAL_STORAGE_COL_AJ_KEY = 'ginza_fms_col_aj_v11';
 const LOCAL_STORAGE_COL_AL_KEY = 'ginza_fms_col_al_v11';
 
+// Helper: Check if an item/order is Completed (Closed) in Col AM
+export const isItemComplete = (status?: string): boolean => {
+  if (!status) return false;
+  const s = status.toLowerCase().trim();
+  return s === 'closed' || s === 'complete' || s === 'completed' || s === 'done';
+};
+
 interface SpreadsheetSimulatorProps {
   isFullWidth?: boolean;
   setIsFullWidth?: (val: boolean) => void;
@@ -362,7 +369,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   const [activeSheetTab, setActiveSheetTab] = useState<'product_order' | 'automation' | 'closed'>('product_order');
 
   // Status Filter in Toolbar
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'Open' | 'In-Progress' | 'Closed'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'Open' | 'In-Progress' | 'Closed' | 'Complete'>('ALL');
 
   // View mode: 'merged' (Customer A-E & N-X Vertically Merged) vs 'unmerged' (Flat row-wise)
   const [viewMode, setViewMode] = useState<'merged' | 'unmerged'>('merged');
@@ -505,7 +512,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       }
 
       const itemKey = `${orderKey}___${row.itemName.trim()}___${row.color.trim()}___${row.width.trim()}`;
-      const dispatch = dispatchRecords[itemKey] !== undefined ? dispatchRecords[itemKey] : 0;
+      const dispatch = dispatchRecords[itemKey] !== undefined ? dispatchRecords[itemKey] : (Number(row.dispatchQty) || 0);
       const balance = Number((row.qty - dispatch).toFixed(4));
 
       map[orderKey].items.push({
@@ -521,30 +528,31 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         deliveryDate: row.deliveryDate,
         dispatchQty: dispatch,
         balanceQty: balance,
-        statusAN: (row.statusAN as any) || 'Open'
+        statusAN: (isItemComplete(row.statusAN) ? 'Complete' : (row.statusAN as any)) || 'Open'
       });
     });
 
     return Object.values(map);
   }, [rawResponses, dispatchRecords]);
 
-  // Handle Status AN Dropdown Change PER ITEM: 'Open' | 'In-Progress' | 'Closed'
-  const handleItemStatusChange = (orderId: string, newStatus: 'Open' | 'In-Progress' | 'Closed') => {
+  // Handle Status AM Dropdown Change PER ITEM: 'Open' | 'In-Progress' | 'Complete'
+  const handleItemStatusChange = (orderId: string, newStatus: 'Open' | 'In-Progress' | 'Closed' | 'Complete') => {
+    const canonicalStatus = isItemComplete(newStatus) ? 'Complete' : newStatus;
     let affectedItemName = '';
     setRawResponses(prev =>
       prev.map(row => {
         if (row.orderId === orderId) {
           affectedItemName = row.itemName;
-          return { ...row, statusAN: newStatus };
+          return { ...row, statusAN: canonicalStatus };
         }
         return row;
       })
     );
 
     setSyncFeedback(
-      `Item "${affectedItemName || orderId}" Col AN set to "${newStatus}". ${
-        newStatus === 'Closed'
-          ? 'Item moved to "Closed Orders" tab archive!'
+      `Item "${affectedItemName || orderId}" Col AM set to "${canonicalStatus}". ${
+        canonicalStatus === 'Complete'
+          ? 'Item moved to "Closed Orders (Complete)" tab!'
           : 'Active in "Product Automation".'
       }`
     );
@@ -1241,6 +1249,19 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     }
 
     const newItems: ProductOrderRow[] = [];
+    const importedColW: Record<string, string> = {};
+    const importedColX: Record<string, string> = {};
+    const importedColAC: Record<string, string> = {};
+    const importedColAE: Record<string, boolean> = {};
+    const importedColAF: Record<string, string> = {};
+    const importedColAG: Record<string, string> = {};
+    const importedColAH: Record<string, boolean> = {};
+    const importedColAI: Record<string, string> = {};
+    const importedColAJ: Record<string, string> = {};
+    const importedColAL: Record<string, string> = {};
+    const importedColAN: Record<string, string> = {};
+    const importedDispatch: Record<string, number> = {};
+
     let currentPO = 'IMPORT-PO';
     let currentName = 'Direct Imported Client';
     let currentDate = new Date().toLocaleDateString('en-GB');
@@ -1377,9 +1398,43 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         const approvalVal = cols[24] ? cols[24].trim() : 'APPROVED';
         const transporterVal = cols[36] ? cols[36].trim() : '';
         const openCloseVal = (cols[38] || '').toLowerCase().trim();
-        let statusAN: 'Open' | 'In-Progress' | 'Closed' = 'Open';
-        if (openCloseVal === 'closed' || statusVal.toLowerCase() === 'closed') statusAN = 'Closed';
-        else if (openCloseVal.includes('prog') || statusVal.toLowerCase().includes('prog')) statusAN = 'In-Progress';
+        let statusAN: 'Open' | 'In-Progress' | 'Complete' | 'Closed' = 'Open';
+        if (isItemComplete(openCloseVal) || isItemComplete(statusVal)) {
+          statusAN = 'Complete';
+        } else if (openCloseVal.includes('prog') || statusVal.toLowerCase().includes('prog')) {
+          statusAN = 'In-Progress';
+        }
+
+        const orderKey = [
+          '',
+          custName,
+          customerMailId,
+          phone,
+          date
+        ].map(v => (v || '').trim()).join('_');
+
+        if (cols[22]) importedColW[orderKey] = cols[22].trim();
+        if (cols[23]) importedColX[orderKey] = cols[23].trim();
+        if (cols[28]) importedColAC[orderKey] = cols[28].trim();
+        if (cols[30]) {
+          const val30 = cols[30].trim().toLowerCase();
+          importedColAE[orderKey] = ['yes', 'true', '✓', 'checked', '1'].includes(val30);
+        }
+        if (cols[31]) importedColAF[orderKey] = cols[31].trim();
+        if (cols[32]) importedColAG[orderKey] = cols[32].trim();
+        if (cols[33]) {
+          const val33 = cols[33].trim().toLowerCase();
+          importedColAH[orderKey] = ['yes', 'true', '✓', 'checked', '1'].includes(val33);
+        }
+        if (cols[34]) importedColAI[orderKey] = cols[34].trim();
+        if (cols[35]) importedColAJ[orderKey] = cols[35].trim();
+        if (cols[37]) importedColAL[orderKey] = cols[37].trim();
+        if (cols[39]) importedColAN[orderKey] = cols[39].trim();
+
+        const itemKey = `${orderKey}___${itemName.trim()}___${color.trim()}___${width.trim()}`;
+        if (dispatchQty > 0) {
+          importedDispatch[itemKey] = dispatchQty;
+        }
 
         newItems.push({
           orderId: `ORD-IMP-${index + 1}-${Date.now().toString(36)}`,
@@ -1468,6 +1523,19 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     });
 
     if (newItems.length > 0) {
+      if (Object.keys(importedColW).length > 0) setColWStatuses(prev => ({ ...prev, ...importedColW }));
+      if (Object.keys(importedColX).length > 0) setColXRemarks(prev => ({ ...prev, ...importedColX }));
+      if (Object.keys(importedColAC).length > 0) setAcStatuses(prev => ({ ...prev, ...importedColAC }));
+      if (Object.keys(importedColAE).length > 0) setColAEChecks(prev => ({ ...prev, ...importedColAE }));
+      if (Object.keys(importedColAF).length > 0) setColAFTimestamps(prev => ({ ...prev, ...importedColAF }));
+      if (Object.keys(importedColAG).length > 0) setColAGRemarks(prev => ({ ...prev, ...importedColAG }));
+      if (Object.keys(importedColAH).length > 0) setColAHChecks(prev => ({ ...prev, ...importedColAH }));
+      if (Object.keys(importedColAI).length > 0) setColAITimestamps(prev => ({ ...prev, ...importedColAI }));
+      if (Object.keys(importedColAJ).length > 0) setColAJRemarks(prev => ({ ...prev, ...importedColAJ }));
+      if (Object.keys(importedColAL).length > 0) setLrNumbers(prev => ({ ...prev, ...importedColAL }));
+      if (Object.keys(importedColAN).length > 0) setAnStatuses(prev => ({ ...prev, ...importedColAN }));
+      if (Object.keys(importedDispatch).length > 0) setDispatchRecords(prev => ({ ...prev, ...importedDispatch }));
+
       if (importReplaceMode) {
         setRawResponses(newItems);
       } else {
@@ -1598,17 +1666,24 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       // Filter items according to tab, status filter, and column filters
       const relevantItems = order.items.filter(item => {
         const itemStatus = item.statusAN || 'Open';
+        const isComp = isItemComplete(itemStatus);
 
         // 1. Tab filter
         if (activeSheetTab === 'automation') {
-          if (itemStatus === 'Closed') return false;
+          if (isComp) return false;
         } else if (activeSheetTab === 'closed') {
-          if (itemStatus !== 'Closed') return false;
+          if (!isComp) return false;
         }
 
         // 2. Toolbar Status dropdown filter
-        if (statusFilter !== 'ALL' && itemStatus !== statusFilter) {
-          return false;
+        if (statusFilter !== 'ALL') {
+          if (statusFilter === 'Closed' || statusFilter === 'Complete') {
+            if (!isComp) return false;
+          } else if (statusFilter === 'Open') {
+            if (isComp || itemStatus === 'In-Progress') return false;
+          } else if (statusFilter === 'In-Progress') {
+            if (itemStatus !== 'In-Progress') return false;
+          }
         }
 
         // 3. Item-level Column Filters (F to N, Y, Z, AN)
@@ -1716,11 +1791,11 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   // Aggregate metrics
   const totalOrdersCount = groupedOrders.length;
   const pendingOnCount = rawResponses.filter(r => !r.orderNo || r.orderNo.trim() === '').length;
-  const activeItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') !== 'Closed').length;
-  const closedItemsCount = rawResponses.filter(r => (r.statusAN || 'Open') === 'Closed').length;
+  const activeItemsCount = rawResponses.filter(r => !isItemComplete(r.statusAN)).length;
+  const closedItemsCount = rawResponses.filter(r => isItemComplete(r.statusAN)).length;
 
-  const activeOrdersCount = groupedOrders.filter(o => o.orderNo && o.orderNo.trim() !== '' && o.items.some(it => (it.statusAN || 'Open') !== 'Closed')).length;
-  const closedOrdersCount = groupedOrders.filter(o => o.orderNo && o.orderNo.trim() !== '' && o.items.length > 0 && o.items.every(it => (it.statusAN || 'Open') === 'Closed')).length;
+  const activeOrdersCount = groupedOrders.filter(o => o.orderNo && o.orderNo.trim() !== '' && o.items.some(it => !isItemComplete(it.statusAN))).length;
+  const closedOrdersCount = groupedOrders.filter(o => o.items.length > 0 && o.items.some(it => isItemComplete(it.statusAN))).length;
   const totalItemRows = filteredOrders.reduce((sum, ord) => sum + ord.items.length, 0);
   const totalOrderQty = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + it.qty, 0), 0);
   const totalDispatched = filteredOrders.reduce((sum, ord) => sum + ord.items.reduce((s, it) => s + (it.dispatchQty || 0), 0), 0);
@@ -1807,9 +1882,9 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                 className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-emerald-500"
               >
                 <option value="ALL">All Statuses ({totalOrdersCount})</option>
-                <option value="Open">🔵 Open Only ({groupedOrders.filter(o => o.statusAN === 'Open').length})</option>
+                <option value="Open">🔵 Open Only ({groupedOrders.filter(o => !isItemComplete(o.statusAN) && o.statusAN !== 'In-Progress').length})</option>
                 <option value="In-Progress">🟡 In-Progress Only ({groupedOrders.filter(o => o.statusAN === 'In-Progress').length})</option>
-                <option value="Closed">🟢 Closed Only ({groupedOrders.filter(o => o.statusAN === 'Closed').length})</option>
+                <option value="Complete">🟢 Complete Only ({closedOrdersCount})</option>
               </select>
             </div>
 
@@ -1817,7 +1892,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
             <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-sky-50 border border-sky-200 text-sky-950 text-xs shadow-2xs shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></span>
               <span className="text-[11px] font-bold text-sky-800">Order Status :</span>
-              <span className="font-mono font-bold text-xs">{activeOrdersCount} Open / {closedOrdersCount} Closed</span>
+              <span className="font-mono font-bold text-xs">{activeOrdersCount} Open / {closedOrdersCount} Complete</span>
             </div>
 
             {/* Clear active filters button */}
@@ -2459,7 +2534,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
               </span>
             </button>
 
-            {/* Tab 3: Closed Orders (Archive) */}
+            {/* Tab 3: Closed Orders (Complete) */}
             <button
               onClick={() => setActiveSheetTab('closed')}
               className={`px-3.5 py-1.5 text-xs font-bold rounded-t-md transition-colors flex items-center gap-1.5 ${
@@ -2469,7 +2544,7 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
               }`}
             >
               <Archive className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Closed Orders (Archive)</span>
+              <span>Closed Orders (Complete)</span>
               <span className="ml-1 text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800 font-mono font-bold">
                 {closedOrdersCount}
               </span>
@@ -4051,10 +4126,10 @@ function renderSpreadsheetRows(
             >
               <div className="flex items-center justify-center">
                 <select
-                  value={item.statusAN || 'Open'}
+                  value={isItemComplete(item.statusAN) ? 'Complete' : (item.statusAN || 'Open')}
                   onChange={(e) => handlers.onItemStatusChange(item.id, e.target.value as any)}
                   className={`text-[11px] font-bold rounded px-1.5 py-0.5 border transition-all cursor-pointer focus:outline-none focus:ring-1 h-6 shadow-2xs ${
-                    (item.statusAN || 'Open') === 'Closed'
+                    isItemComplete(item.statusAN)
                       ? 'bg-emerald-100 text-emerald-900 border-emerald-400 focus:ring-emerald-500'
                       : (item.statusAN || 'Open') === 'In-Progress'
                       ? 'bg-amber-100 text-amber-900 border-amber-400 focus:ring-amber-500'
@@ -4063,7 +4138,7 @@ function renderSpreadsheetRows(
                 >
                   <option value="Open">🔵 Open</option>
                   <option value="In-Progress">🟡 In-Progress</option>
-                  <option value="Closed">🟢 Closed</option>
+                  <option value="Complete">🟢 Complete</option>
                 </select>
               </div>
             </td>
