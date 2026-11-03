@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { GroupedOrder, ProductOrderRow, OrderItem } from '../types/fms';
 import { initialRawResponses, initialExistingDispatch, fmsColumnMapping, productOrderColumns } from '../data/sampleOrders';
 import { ProductOrderView } from './ProductOrderView';
+import { saveOrdersToStorage, loadOrdersFromStorage, clearOrdersFromStorage } from '../utils/orderStorage';
 import {
   RotateCcw,
   PlusCircle,
@@ -49,15 +50,29 @@ import {
   FileText,
   Github,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Loader2,
+  Link2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY = 'ginza_fms_sheet_orders_v9';
 const LOCAL_STORAGE_DISPATCH_KEY = 'ginza_fms_sheet_dispatch_v9';
-const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v9';
+const LOCAL_STORAGE_COL_VISIBILITY = 'ginza_fms_col_visibility_v11';
 const LOCAL_STORAGE_FIREBASE_CONFIG = 'ginza_fms_firebase_cfg_v9';
 const LOCAL_STORAGE_FREEZE_CONFIG = 'ginza_fms_freeze_cfg_v9';
 const LOCAL_STORAGE_CONFIRM_KEY = 'ginza_fms_confirm_msg_v9';
+const LOCAL_STORAGE_DISPATCH_WA_KEY = 'ginza_fms_dispatch_wa_v11';
+const LOCAL_STORAGE_COL_W_KEY = 'ginza_fms_col_w_v11';
+const LOCAL_STORAGE_COL_X_KEY = 'ginza_fms_col_x_v11';
+const LOCAL_STORAGE_COL_AE_KEY = 'ginza_fms_col_ae_v11';
+const LOCAL_STORAGE_COL_AF_KEY = 'ginza_fms_col_af_v11';
+const LOCAL_STORAGE_COL_AG_KEY = 'ginza_fms_col_ag_v11';
+const LOCAL_STORAGE_COL_AH_KEY = 'ginza_fms_col_ah_v11';
+const LOCAL_STORAGE_COL_AI_KEY = 'ginza_fms_col_ai_v11';
+const LOCAL_STORAGE_COL_AJ_KEY = 'ginza_fms_col_aj_v11';
+const LOCAL_STORAGE_COL_AL_KEY = 'ginza_fms_col_al_v11';
 
 interface SpreadsheetSimulatorProps {
   isFullWidth?: boolean;
@@ -82,6 +97,15 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     return initialRawResponses;
   });
 
+  // Load larger datasets (6,000+ rows) from IndexedDB on initial mount
+  useEffect(() => {
+    loadOrdersFromStorage().then((saved) => {
+      if (saved && Array.isArray(saved) && saved.length > 0) {
+        setRawResponses(saved);
+      }
+    });
+  }, []);
+
   // State for user-entered dispatch quantities in Col Y
   const [dispatchRecords, setDispatchRecords] = useState<Record<string, number>>(() => {
     try {
@@ -99,13 +123,25 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   const [visibleCols, setVisibleCols] = useState<Record<string, boolean>>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_COL_VISIBILITY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...parsed,
+          AA: parsed.AA ?? true,
+          AB: parsed.AB ?? true,
+          AG: parsed.AG ?? true,
+          AH: parsed.AH ?? true,
+          AI: parsed.AI ?? true,
+          AJ: parsed.AJ ?? true,
+          AK: parsed.AK ?? true,
+          AL: parsed.AL ?? true,
+        };
+      }
     } catch (e) {}
-    // Default: Show core 26 columns + AE, AF, AN, AO, AP (Hide extra optional follow-ups initially for cleaner view)
+    // Default: Show all 43 active columns A to AQ from Google Sheet
     const initial: Record<string, boolean> = {};
     fmsColumnMapping.forEach(col => {
-      const isExtra = ['AA', 'AB', 'AC', 'AD', 'AG', 'AH', 'AI', 'AJ', 'AK', 'AL', 'AQ', 'AR', 'AS'].includes(col.sheetCol);
-      initial[col.sheetCol] = !isExtra;
+      initial[col.sheetCol] = true;
     });
     return initial;
   });
@@ -135,8 +171,15 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   const [showColManager, setShowColManager] = useState(false);
   const [selectedColsToHide, setSelectedColsToHide] = useState<string[]>([]);
 
-  // Excel / CSV Import Modal
+  // Excel / CSV / Google Sheet Import Modal
   const [showImportModal, setShowImportModal] = useState(false);
+  const [importTabMode, setImportTabMode] = useState<'sheet' | 'paste' | 'file'>('sheet');
+  const [importSheetId, setImportSheetId] = useState('1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q');
+  const [importTabName, setImportTabName] = useState('Product Order');
+  const [autoSyncToFirebase, setAutoSyncToFirebase] = useState(true);
+  const [importReplaceMode, setImportReplaceMode] = useState(true);
+  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [pastedDataText, setPastedDataText] = useState('');
 
   // Vercel / GitHub Deployment Modal
@@ -147,14 +190,27 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   const [firebaseUrl, setFirebaseUrl] = useState(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_FIREBASE_CONFIG);
-      if (saved) return JSON.parse(saved).url || 'https://ginza-fms-default-rtdb.firebaseio.com';
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.url) return parsed.url;
+      }
     } catch (e) {}
-    return 'https://ginza-fms-default-rtdb.firebaseio.com';
+    return 'https://project-vishal-team-default-rtdb.firebaseio.com';
+  });
+  const [firebaseSecret, setFirebaseSecret] = useState(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_FIREBASE_CONFIG);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.secret !== undefined) return parsed.secret;
+      }
+    } catch (e) {}
+    return 'iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J';
   });
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
-  // Col AE: Instant Confirmation Msg Status ("Message Sent" vs "Pending")
-  const [aeStatuses, setAeStatuses] = useState<Record<string, string>>(() => {
+  // Col AC: Confirmation Msg Status / WhatsApp Sent ("Message Sent" vs "Pending")
+  const [acStatuses, setAcStatuses] = useState<Record<string, string>>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_CONFIRM_KEY);
       if (saved) return JSON.parse(saved);
@@ -165,21 +221,142 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Message Sent'
     };
   });
+  // Compatibility alias
+  const aeStatuses = acStatuses;
+  const setAeStatuses = setAcStatuses;
 
-  // Col AO: Dispatch Status ("Message Sent" vs "Pending")
-  const [aoStatuses, setAoStatuses] = useState<Record<string, string>>({
-    '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Message Sent',
-    'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Message Sent',
-    '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'Pending'
+  // Col AN: Delivered Whatspp Msg / WhatsApp Sent ("Message Sent" vs "Pending")
+  const [anStatuses, setAnStatuses] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_DISPATCH_WA_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Message Sent',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Message Sent',
+      '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'Pending'
+    };
+  });
+  // Compatibility alias
+  const aoStatuses = anStatuses;
+  const setAoStatuses = setAnStatuses;
+
+  // Col AL: LR- Number state
+  const [lrNumbers, setLrNumbers] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AL_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'ATC-98442',
+      'N/A_M G Enterprises (Delhi)_m.g.enterprises27474@gmail.com_9811138454_29/01/2026': '',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'HARI-1290',
+      '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'MEHTA-0041'
+    };
   });
 
-  // Col AM: LR- Number state
-  const [lrNumbers, setLrNumbers] = useState<Record<string, string>>({
-    '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'ATC-98442',
-    'N/A_M G Enterprises (Delhi)_m.g.enterprises27474@gmail.com_9811138454_29/01/2026': '',
-    'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'HARI-1290',
-    '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'MEHTA-0041'
+  // Col W: Status (Manual User Text Edit with Auto-Save)
+  const [colWStatuses, setColWStatuses] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_W_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'In Production',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Partial Dispatched',
+      '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': 'In Production'
+    };
   });
+  const colAAStatuses = colWStatuses;
+
+  // Col X: Remark (Manual User Text Edit with Auto-Save)
+  const [colXRemarks, setColXRemarks] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_X_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Confirm to Viren 15 days',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Phutta pack 56"',
+      '5281_Nandani Lace House (Delhi)_N/A_8800421410_29/01/2026': '4-5 days delivery'
+    };
+  });
+  const colABRemarks = colXRemarks;
+
+  // Col AE: Follow-up 1 Checkbox (true/false)
+  const [colAEChecks, setColAEChecks] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AE_KEY) || localStorage.getItem('ginza_fms_col_ag_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': true,
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': true
+    };
+  });
+  const colAGChecks = colAEChecks;
+
+  // Col AF: Follow-up 1 Timestamp (Auto populated when Col AE checked)
+  const [colAFTimestamps, setColAFTimestamps] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AF_KEY) || localStorage.getItem('ginza_fms_col_ah_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': '30/01/2026, 11:20:00 am',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': '30/01/2026, 02:45:10 pm'
+    };
+  });
+  const colAHTimestamps = colAFTimestamps;
+
+  // Col AG: Follow-up 1 Remark (Manual User Text Edit with Auto-Save) - Editable!
+  const [colAGRemarks, setColAGRemarks] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AG_KEY) || localStorage.getItem('ginza_fms_col_ai_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      '5277_Fashion Dupatta Corner (Delhi)_amanpreet0704@gmail.com_8468829837_29/01/2026': 'Confirmed with client delivery schedule',
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': '413 Mtr sent via Hari Transport'
+    };
+  });
+  const colAIRemarks = colAGRemarks;
+
+  // Col AH: Follow-up 2 Checkbox (true/false)
+  const [colAHChecks, setColAHChecks] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AH_KEY) || localStorage.getItem('ginza_fms_col_aj_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': true
+    };
+  });
+  const colAJChecks = colAHChecks;
+
+  // Col AI: Follow-up 2 Timestamp (Auto populated when Col AH checked)
+  const [colAITimestamps, setColAITimestamps] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AI_KEY) || localStorage.getItem('ginza_fms_col_ak_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': '31/01/2026, 10:15:22 am'
+    };
+  });
+  const colAKTimestamps = colAITimestamps;
+
+  // Col AJ: Follow-up 2 Remark (Manual User Text Edit with Auto-Save) - Editable!
+  const [colAJRemarks, setColAJRemarks] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_COL_AJ_KEY) || localStorage.getItem('ginza_fms_col_al_v10');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {
+      'N/A_Ganpati Dupatta House (Amritsar)_ganpatidupattahouse1@yahoo.com_9417054532_29/01/2026': 'Balance 67 Mtr pending next roll lot'
+    };
+  });
+  const colALRemarks = colAJRemarks;
 
   // Active Sheet tab: 'product_order' (28-Col Raw Flat Sheet), 'automation' (Product Automation: Active Orders), 'closed' (Closed Orders Archive)
   const [activeSheetTab, setActiveSheetTab] = useState<'product_order' | 'automation' | 'closed'>('product_order');
@@ -213,17 +390,30 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   // Quick edit modal for Order No (Col X)
   const [editingOrderNo, setEditingOrderNo] = useState<{ key: string; po: string; value: string } | null>(null);
 
-  // Save to localStorage when state changes
+  // Debounced safe saving to IndexedDB (supports 10,000+ items without 3,000 cap)
   useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(rawResponses));
-    } catch (e) {}
+    const timer = setTimeout(() => {
+      // 1. Save entire array to IndexedDB (no 3,000 cap, supports 10,000+ rows)
+      saveOrdersToStorage(rawResponses);
+      // 2. Safe fallback to localStorage for smaller datasets
+      try {
+        if (rawResponses.length <= 1500) {
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(rawResponses));
+        }
+      } catch (e) {
+        // LocalStorage quota reached, safely handled by IndexedDB above
+      }
+    }, 600);
+    return () => clearTimeout(timer);
   }, [rawResponses]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_DISPATCH_KEY, JSON.stringify(dispatchRecords));
-    } catch (e) {}
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(LOCAL_STORAGE_DISPATCH_KEY, JSON.stringify(dispatchRecords));
+      } catch (e) {}
+    }, 600);
+    return () => clearTimeout(timer);
   }, [dispatchRecords]);
 
   useEffect(() => {
@@ -239,10 +429,35 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   }, [freezeColumns, freezeRows]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_CONFIRM_KEY, JSON.stringify(aeStatuses));
-    } catch (e) {}
-  }, [aeStatuses]);
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(LOCAL_STORAGE_CONFIRM_KEY, JSON.stringify(acStatuses));
+        localStorage.setItem(LOCAL_STORAGE_DISPATCH_WA_KEY, JSON.stringify(anStatuses));
+        localStorage.setItem(LOCAL_STORAGE_COL_W_KEY, JSON.stringify(colWStatuses));
+        localStorage.setItem(LOCAL_STORAGE_COL_X_KEY, JSON.stringify(colXRemarks));
+        localStorage.setItem(LOCAL_STORAGE_COL_AE_KEY, JSON.stringify(colAEChecks));
+        localStorage.setItem(LOCAL_STORAGE_COL_AF_KEY, JSON.stringify(colAFTimestamps));
+        localStorage.setItem(LOCAL_STORAGE_COL_AG_KEY, JSON.stringify(colAGRemarks));
+        localStorage.setItem(LOCAL_STORAGE_COL_AH_KEY, JSON.stringify(colAHChecks));
+        localStorage.setItem(LOCAL_STORAGE_COL_AI_KEY, JSON.stringify(colAITimestamps));
+        localStorage.setItem(LOCAL_STORAGE_COL_AJ_KEY, JSON.stringify(colAJRemarks));
+        localStorage.setItem(LOCAL_STORAGE_COL_AL_KEY, JSON.stringify(lrNumbers));
+      } catch (e) {}
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [
+    acStatuses,
+    anStatuses,
+    colWStatuses,
+    colXRemarks,
+    colAEChecks,
+    colAFTimestamps,
+    colAGRemarks,
+    colAHChecks,
+    colAITimestamps,
+    colAJRemarks,
+    lrNumbers
+  ]);
 
   // Group raw responses into distinct orders
   const groupedOrders: GroupedOrder[] = useMemo(() => {
@@ -371,6 +586,50 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     setRawResponses(prev => prev.filter(row => row.orderId !== itemOrderId));
     setSyncFeedback(`Item row removed.`);
     setTimeout(() => setSyncFeedback(null), 3000);
+  };
+
+  // Clear / Delete all rows from Product Order tab (Wipes table to 0 rows for clean 1:1 fresh upload)
+  const handleClearAllProductOrders = async () => {
+    setRawResponses([]);
+    await clearOrdersFromStorage();
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+    } catch (e) {}
+    setSyncFeedback('✓ All rows deleted from Product Order tab. Ready for clean 1:1 fresh upload!');
+    setTimeout(() => setSyncFeedback(null), 4000);
+  };
+
+  // Clear all active orders from Product Automation tab (Unassigns SO# or wipes active items)
+  const handleClearProductAutomation = () => {
+    if (window.confirm("Are you sure you want to clear the Product Automation tab? Active Order Numbers will be unassigned so you can upload fresh automation data.")) {
+      setRawResponses(prev =>
+        prev.map(row => ({
+          ...row,
+          orderNo: '',
+          orderNoTimestamp: '',
+          statusAN: 'Open'
+        }))
+      );
+      setSyncFeedback("✓ Product Automation cleared! Orders unassigned and returned to pending in Product Order.");
+      setTimeout(() => setSyncFeedback(null), 4500);
+    }
+  };
+
+  // Full Clean Reset for New Project (Wipes all data to 0 rows for clean slate)
+  const handleFullProjectClean = async () => {
+    if (window.confirm("Full Clean Reset: Do you want to wipe all records (0 rows) to set up your new project with Google Sheet 1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q & Firebase project-vishal-team?")) {
+      setRawResponses([]);
+      await clearOrdersFromStorage();
+      try {
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+        localStorage.removeItem(LOCAL_STORAGE_DISPATCH_KEY);
+      } catch (e) {}
+      setImportSheetId('1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q');
+      setImportTabName('Product Order');
+      setFirebaseUrl('https://project-vishal-team-default-rtdb.firebaseio.com');
+      setSyncFeedback("✓ Full Project Clean complete (0 rows). Ready to connect your new Google Sheet & Firebase!");
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
   };
 
   // Add Item to existing order
@@ -587,6 +846,111 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     setTimeout(() => setSyncFeedback(null), 4000);
   };
 
+  // Handlers for Operational Columns W, X, AC, AE, AF, AG, AH, AI, AJ, AL, AN
+  const handleToggleColAE = (orderKey: string, checked: boolean) => {
+    setColAEChecks(prev => {
+      const next = { ...prev, [orderKey]: checked };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_AE_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+    if (checked) {
+      const ts = new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+      setColAFTimestamps(prev => {
+        const next = { ...prev, [orderKey]: ts };
+        try { localStorage.setItem(LOCAL_STORAGE_COL_AF_KEY, JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setSyncFeedback(`Col AE Follow-up 1 Checked ✓ | Auto Timestamp set to ${ts} in Col AF`);
+    } else {
+      setColAFTimestamps(prev => {
+        const next = { ...prev, [orderKey]: '' };
+        try { localStorage.setItem(LOCAL_STORAGE_COL_AF_KEY, JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setSyncFeedback(`Col AE Follow-up 1 Unchecked | Col AF Timestamp cleared`);
+    }
+    setTimeout(() => setSyncFeedback(null), 3500);
+  };
+  const handleToggleColAG = handleToggleColAE;
+
+  const handleUpdateColAG = (orderKey: string, val: string) => {
+    setColAGRemarks(prev => {
+      const next = { ...prev, [orderKey]: val };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_AG_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const handleUpdateColAI = handleUpdateColAG;
+
+  const handleToggleColAH = (orderKey: string, checked: boolean) => {
+    setColAHChecks(prev => {
+      const next = { ...prev, [orderKey]: checked };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_AH_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+    if (checked) {
+      const ts = new Date().toLocaleString('en-IN', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+      setColAITimestamps(prev => {
+        const next = { ...prev, [orderKey]: ts };
+        try { localStorage.setItem(LOCAL_STORAGE_COL_AI_KEY, JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setSyncFeedback(`Col AH Follow-up 2 Checked ✓ | Auto Timestamp set to ${ts} in Col AI`);
+    } else {
+      setColAITimestamps(prev => {
+        const next = { ...prev, [orderKey]: '' };
+        try { localStorage.setItem(LOCAL_STORAGE_COL_AI_KEY, JSON.stringify(next)); } catch (e) {}
+        return next;
+      });
+      setSyncFeedback(`Col AH Follow-up 2 Unchecked | Col AI Timestamp cleared`);
+    }
+    setTimeout(() => setSyncFeedback(null), 3500);
+  };
+  const handleToggleColAJ = handleToggleColAH;
+
+  const handleUpdateColAJ = (orderKey: string, val: string) => {
+    setColAJRemarks(prev => {
+      const next = { ...prev, [orderKey]: val };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_AJ_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const handleUpdateColAL = handleUpdateColAJ;
+
+  const handleUpdateColW = (orderKey: string, val: string) => {
+    setColWStatuses(prev => {
+      const next = { ...prev, [orderKey]: val };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_W_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const handleUpdateColAA = handleUpdateColW;
+
+  const handleUpdateColX = (orderKey: string, val: string) => {
+    setColXRemarks(prev => {
+      const next = { ...prev, [orderKey]: val };
+      try { localStorage.setItem(LOCAL_STORAGE_COL_X_KEY, JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  };
+  const handleUpdateColAB = handleUpdateColX;
+
   // Export entire sheet as CSV (Exact 45 Columns from user's specification)
   const handleExportCSV = () => {
     const headers = [
@@ -631,18 +995,18 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
           `"${order.orderNo || ''}"`,
           `${item.dispatchQty || 0}`,
           `${item.balanceQty || 0}`,
-          `"Active"`,
-          `""`,
+          `"${colAAStatuses[order.orderKey] || 'In Production'}"`,
+          `"${(colABRemarks[order.orderKey] || '').replace(/"/g, '""')}"`,
           `"Sent"`,
           `"Delivered"`,
-          `"${aoStatuses[order.orderKey] || 'Pending'}"`,
-          `"https://api.whatsapp.com/..."`,
-          `""`,
-          `""`,
-          `""`,
-          `""`,
-          `""`,
-          `""`,
+          `"${aeStatuses[order.orderKey] || 'Pending'}"`,
+          `"${(aeStatuses[order.orderKey] || 'Pending') === 'Message Sent' ? 'Sent WA' : ''}"`,
+          `"${colAGChecks[order.orderKey] ? 'Yes' : 'No'}"`,
+          `"${colAHTimestamps[order.orderKey] || ''}"`,
+          `"${(colAIRemarks[order.orderKey] || '').replace(/"/g, '""')}"`,
+          `"${colAJChecks[order.orderKey] ? 'Yes' : 'No'}"`,
+          `"${colAKTimestamps[order.orderKey] || ''}"`,
+          `"${(colALRemarks[order.orderKey] || '').replace(/"/g, '""')}"`,
           `"${lrNumbers[order.orderKey] || ''}"`,
           `"${order.statusAN || 'Open'}"`,
           `"${aoStatuses[order.orderKey] || 'Pending'}"`,
@@ -667,94 +1031,554 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     setTimeout(() => setSyncFeedback(null), 3500);
   };
 
-  // Direct Excel / CSV Paste or File Import Parser
-  const handleParseImportedData = (text: string) => {
+  // Helper: Extract Clean Google Sheet ID from URL or Raw ID
+  const extractSheetId = (input: string): string => {
+    const trimmed = input.trim();
+    const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return trimmed;
+  };
+
+  // Helper: Push order rows to Firebase Realtime Database
+  const pushOrdersToFirebase = async (
+    rowsToSync: ProductOrderRow[],
+    customUrl?: string,
+    customSecret?: string
+  ): Promise<{ activeOrders: number; closedOrders: number; totalRows: number }> => {
+    const targetUrl = (customUrl || firebaseUrl || 'https://ginza-fms-default-rtdb.firebaseio.com').trim().replace(/\/+$/, '');
+    const targetSecret = (customSecret !== undefined ? customSecret : firebaseSecret || 'iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J').trim();
+
+    if (!targetUrl) {
+      throw new Error('Firebase Realtime Database URL not specified.');
+    }
+
+    const authParam = targetSecret ? `?auth=${encodeURIComponent(targetSecret)}` : '';
+
+    // Group rows by orderKey
+    const tempGroupMap: Record<string, ProductOrderRow[]> = {};
+    rowsToSync.forEach(r => {
+      const k = `${r.customerPO || 'NOPO'}_${r.customerName || 'NOCUST'}_${r.orderNo || r.orderDate || 'NODATE'}`;
+      if (!tempGroupMap[k]) tempGroupMap[k] = [];
+      tempGroupMap[k].push(r);
+    });
+
+    const automationPayload: Record<string, any> = {};
+    const closedPayload: Record<string, any> = {};
+
+    Object.entries(tempGroupMap).forEach(([rawKey, items]) => {
+      const first = items[0];
+      const safeKey = rawKey.replace(/[.#$/\[\]]/g, '_').substring(0, 100);
+
+      const activeItems = items.filter(it => (it.statusAN || 'Open') !== 'Closed');
+      const closedItems = items.filter(it => (it.statusAN || 'Open') === 'Closed');
+
+      if (activeItems.length > 0) {
+        automationPayload[safeKey] = {
+          order_key: safeKey,
+          customer_po: first.customerPO,
+          customer_name: first.customerName,
+          customer_email: first.customerEmail,
+          order_date: first.orderDate,
+          order_no: first.orderNo || '',
+          sales_person: first.salesPerson,
+          transporter_name: first.transporterName,
+          billing_address: first.billingAddress,
+          delivery_address: first.deliveryAddress,
+          customer_number: first.customerNumber,
+          remark: first.remark,
+          status: first.statusAN || 'Open',
+          items: activeItems.map((it, idx) => ({
+            item_index: idx + 1,
+            item_name: it.itemName,
+            color: it.color,
+            width: it.width,
+            unit: it.unitOfItem || it.unit,
+            qty: it.qty,
+            rate: it.rate,
+            discount: it.discount,
+            delivery_date: it.deliveryDate,
+            dispatch_qty: it.dispatchQty || 0,
+            balance_qty: it.balanceQty || it.qty,
+            status: it.statusAN || 'Open'
+          })),
+          total_qty: activeItems.reduce((s, it) => s + it.qty, 0),
+          total_dispatch_qty: activeItems.reduce((s, it) => s + (it.dispatchQty || 0), 0),
+          total_balance_qty: activeItems.reduce((s, it) => s + (it.balanceQty || it.qty), 0),
+          last_synced_at: new Date().toISOString()
+        };
+      }
+
+      if (closedItems.length > 0) {
+        closedPayload[safeKey] = {
+          order_key: safeKey,
+          customer_po: first.customerPO,
+          customer_name: first.customerName,
+          customer_email: first.customerEmail,
+          order_date: first.orderDate,
+          order_no: first.orderNo || '',
+          sales_person: first.salesPerson,
+          transporter_name: first.transporterName,
+          billing_address: first.billingAddress,
+          delivery_address: first.deliveryAddress,
+          customer_number: first.customerNumber,
+          remark: first.remark,
+          status: 'Closed',
+          items: closedItems.map((it, idx) => ({
+            item_index: idx + 1,
+            item_name: it.itemName,
+            color: it.color,
+            width: it.width,
+            unit: it.unitOfItem || it.unit,
+            qty: it.qty,
+            rate: it.rate,
+            discount: it.discount,
+            delivery_date: it.deliveryDate,
+            dispatch_qty: it.dispatchQty || 0,
+            balance_qty: it.balanceQty || 0,
+            status: 'Closed'
+          })),
+          total_qty: closedItems.reduce((s, it) => s + it.qty, 0),
+          total_dispatch_qty: closedItems.reduce((s, it) => s + (it.dispatchQty || 0), 0),
+          total_balance_qty: closedItems.reduce((s, it) => s + (it.balanceQty || 0), 0),
+          last_synced_at: new Date().toISOString()
+        };
+      }
+    });
+
+    // Send PATCH to /product_automation.json
+    if (Object.keys(automationPayload).length > 0) {
+      const resp = await fetch(`${targetUrl}/product_automation.json${authParam}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(automationPayload)
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Firebase HTTP ${resp.status}: ${text.substring(0, 150)}`);
+      }
+    }
+
+    // Send PATCH to /closed_orders.json
+    if (Object.keys(closedPayload).length > 0) {
+      const resp2 = await fetch(`${targetUrl}/closed_orders.json${authParam}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(closedPayload)
+      });
+      if (!resp2.ok) {
+        const text = await resp2.text();
+        throw new Error(`Firebase HTTP ${resp2.status}: ${text.substring(0, 150)}`);
+      }
+    }
+
+    return {
+      activeOrders: Object.keys(automationPayload).length,
+      closedOrders: Object.keys(closedPayload).length,
+      totalRows: rowsToSync.length
+    };
+  };
+
+  // Helper: Robust CSV parser respecting quotes and newlines
+  const parseCsvRows = (text: string): string[][] => {
+    const rows: string[][] = [];
+    let currentRow: string[] = [];
+    let currentCell = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      const nextChar = text[i + 1];
+
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          currentCell += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if ((char === ',' || char === '\t') && !inQuotes) {
+        currentRow.push(currentCell.trim());
+        currentCell = '';
+      } else if ((char === '\r' || char === '\n') && !inQuotes) {
+        if (char === '\r' && nextChar === '\n') {
+          i++;
+        }
+        currentRow.push(currentCell.trim());
+        if (currentRow.some(c => c.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentCell = '';
+      } else {
+        currentCell += char;
+      }
+    }
+
+    if (currentCell.length > 0 || currentRow.length > 0) {
+      currentRow.push(currentCell.trim());
+      if (currentRow.some(c => c.length > 0)) {
+        rows.push(currentRow);
+      }
+    }
+
+    return rows;
+  };
+
+  // Direct Excel / CSV Paste or Google Sheet Fetch Data Parser
+  const handleParseImportedData = async (
+    text: string,
+    syncFirebase: boolean = true,
+    sourceLabel: string = 'Import'
+  ) => {
     if (!text.trim()) return;
 
-    const lines = text.trim().split(/\r?\n/);
-    if (lines.length === 0) return;
+    const parsedRows = parseCsvRows(text.trim());
+    if (parsedRows.length === 0) {
+      setImportError('Sheet data me koi valid rows nahi mili.');
+      return;
+    }
 
-    // Detect delimiter (tab or comma)
-    const delimiter = lines[0].includes('\t') ? '\t' : ',';
     const newItems: ProductOrderRow[] = [];
-
     let currentPO = 'IMPORT-PO';
     let currentName = 'Direct Imported Client';
     let currentDate = new Date().toLocaleDateString('en-GB');
+    let currentEmail = 'N/A';
+    let currentBilling = '';
+    let currentDelivery = '';
+    let currentTransporter = 'SafeXpress';
+    let currentSalesPerson = 'Lalit Maroo';
+    let currentOrderNo = '';
+    let currentRemark = '';
 
-    lines.forEach((line, index) => {
-      // Skip header if it contains 'timestamp' or 'customer'
-      if (index === 0 && (line.toLowerCase().includes('customer') || line.toLowerCase().includes('timestamp'))) {
+    parsedRows.forEach((cols, index) => {
+      const firstColLower = (cols[0] || '').toLowerCase().trim();
+      const secondColLower = (cols[1] || '').toLowerCase().trim();
+      const thirdColLower = (cols[2] || '').toLowerCase().trim();
+      const fourthColLower = (cols[3] || '').toLowerCase().trim();
+
+      // Skip header row if it contains header keywords
+      if (
+        index === 0 &&
+        (firstColLower.includes('timestamp') ||
+          firstColLower.includes('order no') ||
+          firstColLower.includes('order') ||
+          secondColLower.includes('customer') ||
+          secondColLower.includes('timestamp') ||
+          thirdColLower.includes('po') ||
+          fourthColLower.includes('customer') ||
+          firstColLower.includes('#'))
+      ) {
         return;
       }
 
-      const cols = line.split(delimiter).map(c => c.replace(/^["']|["']$/g, '').trim());
-      if (cols.length < 3) return;
+      if (cols.length < 2) return;
 
-      if (cols[1] && cols[1] !== '') currentPO = cols[1];
-      if (cols[2] && cols[2] !== '') currentName = cols[2];
-      if (cols[4] && cols[4] !== '') currentDate = cols[4];
+      const isOrderTab = importTabName.toLowerCase().includes('order') || sourceLabel.toLowerCase().includes('order');
+      const is19ColFormat = isOrderTab || (cols.length >= 15 && cols.length <= 25);
+      const is43ColFormat = cols.length >= 35;
 
-      newItems.push({
-        orderId: `IMP-${Date.now()}-${index}`,
-        timestamp: cols[0] || new Date().toLocaleString('en-IN'),
-        customerPO: cols[1] || currentPO,
-        customerName: cols[2] || currentName,
-        customerEmail: cols[3] || 'N/A',
-        orderDate: cols[4] || currentDate,
-        unit: cols[5] || 'WARP(UDHANA)',
-        itemName: cols[6] || `Imported Item ${index}`,
-        color: cols[7] || 'White',
-        width: cols[8] || '56"',
-        unitOfItem: cols[9] || 'MTR',
-        qty: Number(cols[10]) || 100,
-        rate: Number(cols[11]) || 150,
-        discount: Number(cols[12]) || 0,
-        deliveryDate: cols[13] || '31/01/2026',
-        remark: cols[14] || '',
-        customerNumber: cols[15] || '',
-        billingAddress: cols[16] || '',
-        deliveryAddress: cols[17] || '',
-        transporterName: cols[18] || 'SafeXpress',
-        salesPerson: cols[19] || 'Lalit Maroo',
-        accountStatus: cols[20] || 'Approved',
-        branch: cols[22] || 'Mumbai',
-        approvalStatus: cols[21] || 'APPROVED',
-        branchHeadName: '',
-        orderNo: cols[23] || '',
-        statusAN: (cols[39] as any) || 'Open'
-      });
+      if (is19ColFormat) {
+        // Exact 19-column Product Order layout (Columns A to S)
+        // Col 0 (A): Timestamp
+        // Col 1 (B): Customer Name
+        // Col 2 (C): Order Date
+        // Col 3 (D): Unit
+        // Col 4 (E): Item Name
+        // Col 5 (F): Color
+        // Col 6 (G): Width
+        // Col 7 (H): Unit (of item)
+        // Col 8 (I): Qty
+        // Col 9 (J): Rate
+        // Col 10 (K): Discount
+        // Col 11 (L): Delivery Date
+        // Col 12 (M): Remark
+        // Col 13 (N): Customer Number
+        // Col 14 (O): Billing Address
+        // Col 15 (P): Delivery Address
+        // Col 16 (Q): Sales Person Name
+        // Col 17 (R): Sales Person Contact
+        // Col 18 (S): Order Number
+
+        const timestamp = cols[0] ? cols[0].trim() : '';
+        const custName = cols[1] ? cols[1].trim() : '';
+        const date = cols[2] ? cols[2].trim() : '';
+        const unit = cols[3] ? cols[3].trim() : '';
+        const itemName = cols[4] ? cols[4].trim() : '';
+        const color = cols[5] ? cols[5].trim() : '';
+        const width = cols[6] ? cols[6].trim() : '';
+        const unitOfItem = cols[7] ? cols[7].trim() : '';
+        const qty = cols[8] ? (parseFloat(cols[8].replace(/,/g, '')) || 0) : 0;
+        const rate = cols[9] ? (parseFloat(cols[9].replace(/,/g, '')) || 0) : 0;
+        const discount = cols[10] ? (parseFloat(cols[10].replace(/,/g, '')) || 0) : 0;
+        const deliveryDate = cols[11] ? cols[11].trim() : '';
+        const remark = cols[12] ? cols[12].trim() : '';
+        const phone = cols[13] ? cols[13].trim() : '';
+        const billing = cols[14] ? cols[14].trim() : '';
+        const delivery = cols[15] ? cols[15].trim() : '';
+        const sales = cols[16] ? cols[16].trim() : '';
+        const salesContact = cols[17] ? cols[17].trim() : '';
+        const orderNo = cols[18] ? cols[18].trim() : '';
+
+        newItems.push({
+          orderId: `ORD-IMP-${index + 1}-${Date.now().toString(36)}`,
+          timestamp: timestamp || new Date().toLocaleString('en-IN'),
+          customerName: custName,
+          customerPO: '',
+          customerEmail: '',
+          orderDate: date,
+          unit: unit,
+          itemName: itemName,
+          color: color,
+          width: width,
+          unitOfItem: unitOfItem,
+          qty: qty,
+          rate: rate,
+          discount: discount,
+          deliveryDate: deliveryDate,
+          remark: remark,
+          customerNumber: phone,
+          billingAddress: billing,
+          deliveryAddress: delivery,
+          salesPerson: sales,
+          salesPersonContact: salesContact,
+          orderNo: orderNo,
+          orderNoTimestamp: orderNo ? new Date().toLocaleString('en-IN') : '',
+          statusAN: 'Open',
+          dispatchQty: 0,
+          balanceQty: qty
+        });
+      } else if (is43ColFormat) {
+        // Exact 43-column Product Automation layout (Columns A to AQ)
+        const timestamp = cols[0] ? cols[0].trim() : '';
+        const custName = cols[1] ? cols[1].trim() : '';
+        const date = cols[2] ? cols[2].trim() : '';
+        const unit = cols[3] ? cols[3].trim() : '';
+        const itemName = cols[4] ? cols[4].trim() : '';
+        const color = cols[5] ? cols[5].trim() : '';
+        const width = cols[6] ? cols[6].trim() : '';
+        const unitOfItem = cols[7] ? cols[7].trim() : '';
+        const qty = cols[8] ? (parseFloat(cols[8].replace(/,/g, '')) || 0) : 0;
+        const rate = cols[9] ? (parseFloat(cols[9].replace(/,/g, '')) || 0) : 0;
+        const discount = cols[10] ? (parseFloat(cols[10].replace(/,/g, '')) || 0) : 0;
+        const deliveryDate = cols[11] ? cols[11].trim() : '';
+        const remark = cols[12] ? cols[12].trim() : '';
+        const phone = cols[13] ? cols[13].trim() : '';
+        const billing = cols[14] ? cols[14].trim() : '';
+        const delivery = cols[15] ? cols[15].trim() : '';
+        const sales = cols[16] ? cols[16].trim() : '';
+        const salesContact = cols[17] ? cols[17].trim() : '';
+        const orderNo = cols[18] ? cols[18].trim() : '';
+        const customerMailId = cols[19] ? cols[19].trim() : '';
+        const dispatchQty = cols[20] ? (parseFloat(cols[20].replace(/,/g, '')) || 0) : 0;
+        const balanceQty = cols[21] ? (parseFloat(cols[21].replace(/,/g, '')) || (qty - dispatchQty)) : (qty - dispatchQty);
+        const statusVal = cols[22] ? cols[22].trim() : 'Open';
+        const approvalVal = cols[24] ? cols[24].trim() : 'APPROVED';
+        const transporterVal = cols[36] ? cols[36].trim() : '';
+        const openCloseVal = (cols[38] || '').toLowerCase().trim();
+        let statusAN: 'Open' | 'In-Progress' | 'Closed' = 'Open';
+        if (openCloseVal === 'closed' || statusVal.toLowerCase() === 'closed') statusAN = 'Closed';
+        else if (openCloseVal.includes('prog') || statusVal.toLowerCase().includes('prog')) statusAN = 'In-Progress';
+
+        newItems.push({
+          orderId: `ORD-IMP-${index + 1}-${Date.now().toString(36)}`,
+          timestamp: timestamp || new Date().toLocaleString('en-IN'),
+          customerName: custName,
+          orderDate: date,
+          unit: unit,
+          itemName: itemName,
+          color: color,
+          width: width,
+          unitOfItem: unitOfItem,
+          qty: qty,
+          rate: rate,
+          discount: discount,
+          deliveryDate: deliveryDate,
+          remark: remark,
+          customerNumber: phone,
+          billingAddress: billing,
+          deliveryAddress: delivery,
+          salesPerson: sales,
+          salesPersonContact: salesContact,
+          orderNo: orderNo,
+          customerEmail: customerMailId,
+          customerMailId: customerMailId,
+          transporterName: transporterVal,
+          approvalStatus: approvalVal,
+          orderNoTimestamp: orderNo ? (cols[25] || new Date().toLocaleString('en-IN')) : '',
+          statusAN: statusAN,
+          dispatchQty: dispatchQty,
+          balanceQty: Math.max(0, balanceQty)
+        });
+      } else {
+        // Fallback layout
+        const po = cols[1] || currentPO;
+        const custName = cols[2] || cols[1] || currentName;
+        const email = cols[3] || currentEmail;
+        const date = cols[4] || cols[2] || currentDate;
+        const unit = cols[5] || 'WARP(UDHANA)';
+        const itemName = cols[6] || cols[4] || `Imported Item ${index}`;
+        const color = cols[7] || cols[5] || 'White';
+        const width = cols[8] || cols[6] || '56"';
+        const unitOfItem = cols[9] || cols[7] || 'MTR';
+        const qty = cols[10] ? (parseFloat(cols[10].replace(/,/g, '')) || 0) : (cols[8] ? parseFloat(cols[8].replace(/,/g, '')) || 0 : 0);
+        const rate = cols[11] ? (parseFloat(cols[11].replace(/,/g, '')) || 0) : (cols[9] ? parseFloat(cols[9].replace(/,/g, '')) || 0 : 0);
+        const discount = cols[12] ? (parseFloat(cols[12].replace(/,/g, '')) || 0) : 0;
+        const deliveryDate = cols[13] || cols[11] || '';
+        const remark = cols[14] || cols[12] || currentRemark;
+        const phone = cols[15] || cols[13] || '';
+        const billing = cols[16] || cols[14] || currentBilling;
+        const delivery = cols[17] || cols[15] || currentDelivery;
+        const transporter = cols[18] || currentTransporter;
+        const sales = cols[19] || cols[16] || currentSalesPerson;
+        const orderNo = cols[23] || cols[18] || currentOrderNo;
+        const dispatchQty = cols[24] ? (parseFloat(cols[24].replace(/,/g, '')) || 0) : 0;
+
+        newItems.push({
+          orderId: `IMP-${Date.now()}-${index}`,
+          referenceNo: cols[0] || '',
+          timestamp: cols[0] || new Date().toLocaleString('en-IN'),
+          customerPO: po,
+          customerName: custName,
+          customerEmail: email,
+          orderDate: date,
+          unit: unit,
+          itemName: itemName,
+          color: color,
+          width: width,
+          unitOfItem: unitOfItem,
+          qty: qty,
+          rate: rate,
+          discount: discount,
+          deliveryDate: deliveryDate,
+          remark: remark,
+          customerNumber: phone,
+          billingAddress: billing,
+          deliveryAddress: delivery,
+          transporterName: transporter,
+          salesPerson: sales,
+          orderNo: orderNo,
+          orderNoTimestamp: new Date().toLocaleString('en-IN'),
+          statusAN: 'Open',
+          dispatchQty: dispatchQty,
+          balanceQty: Math.max(0, qty - dispatchQty)
+        });
+      }
     });
 
     if (newItems.length > 0) {
-      setRawResponses(prev => [...newItems, ...prev]);
+      if (importReplaceMode) {
+        setRawResponses(newItems);
+      } else {
+        setRawResponses(prev => [...newItems, ...prev]);
+      }
       setShowImportModal(false);
       setPastedDataText('');
-      setSyncFeedback(`Successfully imported ${newItems.length} rows directly into spreadsheet!`);
-      setTimeout(() => setSyncFeedback(null), 4500);
+      setImportError(null);
+      setImportError(null);
+
+      // Auto-Sync to Firebase if enabled
+      if (syncFirebase && firebaseUrl) {
+        setSyncFeedback(`Imported ${newItems.length} rows! Pushing to Firebase Cloud Database...`);
+        try {
+          const syncRes = await pushOrdersToFirebase(newItems);
+          setSyncFeedback(
+            `✓ Successfully imported ${newItems.length} rows from "${sourceLabel}" & saved ${syncRes.activeOrders + syncRes.closedOrders} orders to Firebase!`
+          );
+        } catch (fbErr: any) {
+          console.warn('Firebase sync warning:', fbErr);
+          setSyncFeedback(
+            `✓ Imported ${newItems.length} rows into application! (Firebase note: ${fbErr.message || 'Check URL/Secret'})`
+          );
+        }
+      } else {
+        setSyncFeedback(`✓ Successfully imported ${newItems.length} rows from "${sourceLabel}" into application!`);
+      }
+
+      setTimeout(() => setSyncFeedback(null), 5000);
+    } else {
+      setImportError('Koi valid data row import nahi ho saki. Kripya column structure verify karein.');
     }
   };
 
-  // Simulate or execute Historical Data Upload to Firebase
-  const handleUploadToFirebase = () => {
-    setUploadProgress(10);
+  // Google Sheet Direct Fetch and Import Handler
+  const handleFetchFromGoogleSheet = async () => {
+    const cleanId = extractSheetId(importSheetId);
+    if (!cleanId) {
+      setImportError('Kripya valid Google Sheet ID ya full Google Sheets URL enter karein.');
+      return;
+    }
+    if (!importTabName.trim()) {
+      setImportError('Kripya Tab / Sheet ka naam enter karein (e.g. Product Automation, Product Order).');
+      return;
+    }
 
-    let p = 10;
-    const interval = setInterval(() => {
-      p += 25;
-      if (p >= 100) {
-        clearInterval(interval);
-        setUploadProgress(100);
-        setSyncFeedback(`Successfully uploaded all ${groupedOrders.length} orders (${rawResponses.length} rows) to Firebase Realtime Database!`);
-        setTimeout(() => {
-          setShowFirebaseModal(false);
-          setUploadProgress(null);
-          setSyncFeedback(null);
-        }, 3000);
-      } else {
-        setUploadProgress(p);
+    setIsFetchingSheet(true);
+    setImportError(null);
+
+    // Google Sheets Visualization API CSV export endpoint:
+    const gvizUrl = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(importTabName.trim())}`;
+
+    try {
+      const resp = await fetch(gvizUrl);
+      if (!resp.ok) {
+        throw new Error(`Google Sheets responded with HTTP status ${resp.status}`);
       }
-    }, 400);
+      const csvText = await resp.text();
+      if (!csvText || csvText.trim().length === 0) {
+        throw new Error(`Tab "${importTabName}" me koi data nahi mila ya tab exist nahi karta.`);
+      }
+
+      // Check if Google returned an HTML login/permission page
+      if (csvText.startsWith('<!DOCTYPE html>') || csvText.includes('<html')) {
+        throw new Error('Google Sheet private hai ya access restricted hai. Sheet ko Share > "Anyone with the link can view" karein, ya "Paste (Ctrl+V)" tab use karein.');
+      }
+
+      // Parse and import data
+      await handleParseImportedData(csvText, autoSyncToFirebase, `Google Sheet Tab: ${importTabName.trim()}`);
+    } catch (err: any) {
+      console.error('Google Sheet Import Error:', err);
+      setImportError(
+        err.message || 'Google Sheet se data fetch karne me error aayi. Kripya check karein ki Sheet me Share -> "Anyone with the link can view" active hai.'
+      );
+    } finally {
+      setIsFetchingSheet(false);
+    }
+  };
+
+  // 1-Click Upload all current Sheet Data to Firebase Realtime Database
+  const handleUploadToFirebase = async () => {
+    try {
+      setUploadProgress(20);
+      setSyncFeedback('Connecting to Firebase Realtime Database...');
+
+      // Save current config in localStorage
+      localStorage.setItem(
+        LOCAL_STORAGE_FIREBASE_CONFIG,
+        JSON.stringify({
+          url: firebaseUrl,
+          secret: firebaseSecret
+        })
+      );
+
+      setUploadProgress(50);
+      const res = await pushOrdersToFirebase(rawResponses);
+      setUploadProgress(100);
+      setSyncFeedback(
+        `✓ Successfully uploaded all ${res.activeOrders + res.closedOrders} orders (${res.totalRows} rows) to Firebase Realtime Database!`
+      );
+      setTimeout(() => {
+        setShowFirebaseModal(false);
+        setUploadProgress(null);
+        setSyncFeedback(null);
+      }, 3500);
+    } catch (err: any) {
+      console.error('Firebase Upload Error:', err);
+      setUploadProgress(null);
+      setSyncFeedback(`Firebase Upload Error: ${err.message || 'Check URL & Secret'}`);
+      setTimeout(() => setSyncFeedback(null), 5000);
+    }
   };
 
   // Filter orders based on activeSheetTab & statusFilter & search & column filters
@@ -803,15 +1627,15 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
       // Header-level Column Filters (A to E, O to X, AE, AF, AO, AP)
       for (const [colKey, selectedVals] of Object.entries(colFilters)) {
         if (!selectedVals || selectedVals.length === 0) continue;
-        if (colKey === 'A' && !selectedVals.includes(order.timestamp)) return;
-        if (colKey === 'B' && !selectedVals.includes(order.customerPO)) return;
-        if (colKey === 'C' && !selectedVals.includes(order.customerName)) return;
-        if (colKey === 'D' && !selectedVals.includes(order.customerEmail)) return;
-        if (colKey === 'E' && !selectedVals.includes(order.orderDate)) return;
-        if (colKey === 'S' && !selectedVals.includes(order.transporterName)) return;
-        if (colKey === 'T' && !selectedVals.includes(order.salesPerson)) return;
-        if (colKey === 'U' && !selectedVals.includes(order.accountStatus)) return;
-        if (colKey === 'V' && !selectedVals.includes(order.approvalStatus)) return;
+        if (colKey === 'A' && !selectedVals.includes(order.timestamp || '')) return;
+        if (colKey === 'B' && !selectedVals.includes(order.customerPO || '')) return;
+        if (colKey === 'C' && !selectedVals.includes(order.customerName || '')) return;
+        if (colKey === 'D' && !selectedVals.includes(order.customerEmail || '')) return;
+        if (colKey === 'E' && !selectedVals.includes(order.orderDate || '')) return;
+        if (colKey === 'S' && !selectedVals.includes(order.transporterName || '')) return;
+        if (colKey === 'T' && !selectedVals.includes(order.salesPerson || '')) return;
+        if (colKey === 'U' && !selectedVals.includes(order.accountStatus || '')) return;
+        if (colKey === 'V' && !selectedVals.includes(order.approvalStatus || '')) return;
         if (colKey === 'X' && !selectedVals.includes(order.orderNo || 'Set SO#')) return;
         if (colKey === 'AE' && !selectedVals.includes(aeStatuses[order.orderKey] || 'Pending')) return;
         if (colKey === 'AO' && !selectedVals.includes(aoStatuses[order.orderKey] || 'Pending')) return;
@@ -868,6 +1692,27 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
     return result;
   }, [groupedOrders, activeSheetTab, statusFilter, searchTerm, colFilters, sortConfig, aeStatuses, aoStatuses]);
 
+  // Virtual Pagination for Product Automation & Closed Orders to prevent browser crash/freeze
+  const [automationPage, setAutomationPage] = useState(1);
+  const [automationPageSize, setAutomationPageSize] = useState<number>(25);
+
+  const totalAutomationPages = Math.max(1, Math.ceil(filteredOrders.length / (automationPageSize || 25)));
+  const safeAutomationPage = Math.min(automationPage, totalAutomationPages);
+
+  const paginatedOrders = useMemo(() => {
+    if (automationPageSize === 0) return filteredOrders;
+    const start = (safeAutomationPage - 1) * automationPageSize;
+    return filteredOrders.slice(start, start + automationPageSize);
+  }, [filteredOrders, safeAutomationPage, automationPageSize]);
+
+  const startRowNumber = useMemo(() => {
+    if (automationPageSize === 0 || safeAutomationPage <= 1) return 2;
+    let count = 2;
+    const prev = filteredOrders.slice(0, (safeAutomationPage - 1) * automationPageSize);
+    prev.forEach(o => { count += o.items.length; });
+    return count;
+  }, [filteredOrders, safeAutomationPage, automationPageSize]);
+
   // Aggregate metrics
   const totalOrdersCount = groupedOrders.length;
   const pendingOnCount = rawResponses.filter(r => !r.orderNo || r.orderNo.trim() === '').length;
@@ -903,19 +1748,19 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
   const getUniqueColumnValues = (col: string): string[] => {
     const set = new Set<string>();
     groupedOrders.forEach(o => {
-      if (col === 'A') set.add(o.timestamp);
-      else if (col === 'B') set.add(o.customerPO);
-      else if (col === 'C') set.add(o.customerName);
-      else if (col === 'D') set.add(o.customerEmail);
-      else if (col === 'E') set.add(o.orderDate);
+      if (col === 'A') set.add(o.timestamp || '');
+      else if (col === 'B') set.add(o.customerPO || '');
+      else if (col === 'C') set.add(o.customerName || '');
+      else if (col === 'D') set.add(o.customerEmail || '');
+      else if (col === 'E') set.add(o.orderDate || '');
       else if (col === 'F') o.items.forEach(it => set.add(it.unit));
       else if (col === 'G') o.items.forEach(it => set.add(it.itemName));
       else if (col === 'H') o.items.forEach(it => set.add(it.color));
       else if (col === 'I') o.items.forEach(it => set.add(it.width));
-      else if (col === 'S') set.add(o.transporterName);
-      else if (col === 'T') set.add(o.salesPerson);
-      else if (col === 'U') set.add(o.accountStatus);
-      else if (col === 'V') set.add(o.approvalStatus);
+      else if (col === 'S') set.add(o.transporterName || '');
+      else if (col === 'T') set.add(o.salesPerson || '');
+      else if (col === 'U') set.add(o.accountStatus || '');
+      else if (col === 'V') set.add(o.approvalStatus || '');
       else if (col === 'X') set.add(o.orderNo || 'Set SO#');
       else if (col === 'AN') set.add(o.statusAN || 'Open');
     });
@@ -1017,51 +1862,66 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
               </button>
             </div>
 
-            {/* FREEZE PANES MENU */}
-            <div className="relative shrink-0">
+            {/* FREEZE PANES BUTTON - 1-CLICK TOGGLE TO UNFREEZE AND BACK */}
+            <div className="relative shrink-0 flex items-center">
               <button
-                onClick={() => setShowFreezeMenu(!showFreezeMenu)}
-                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg border transition-colors shadow-2xs ${
+                onClick={() => {
+                  const nextVal = freezeColumns > 0 ? 0 : 2;
+                  setFreezeColumns(nextVal);
+                  setSyncFeedback(nextVal === 0 ? 'Columns Unfrozen (0 frozen cols)' : 'Freeze 2 Cols (# + Customer Name) Active');
+                  setTimeout(() => setSyncFeedback(null), 3000);
+                }}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-l-lg border transition-colors shadow-2xs cursor-pointer ${
                   freezeColumns > 0
-                    ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-bold'
                     : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
                 }`}
-                title="Freeze Header Rows or Freeze Columns (PO & Customer Name)"
+                title="Click to toggle between Freeze (2) and Unfreeze"
               >
-                <Pin className="w-3 h-3 text-emerald-700" />
-                <span>Freeze {freezeColumns > 0 ? `(${freezeColumns})` : ''}</span>
-                <ChevronDown className="w-3 h-3 text-slate-400" />
+                <Pin className={`w-3 h-3 ${freezeColumns > 0 ? 'text-emerald-700 fill-emerald-600' : 'text-slate-400'}`} />
+                <span>{freezeColumns > 0 ? `Freeze (${freezeColumns})` : 'Unfreeze'}</span>
+              </button>
+              <button
+                onClick={() => setShowFreezeMenu(!showFreezeMenu)}
+                className={`px-1.5 py-1 text-xs border border-l-0 rounded-r-lg transition-colors cursor-pointer ${
+                  freezeColumns > 0
+                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                    : 'bg-white text-slate-500 border-slate-300 hover:bg-slate-50'
+                }`}
+                title="More Freeze Options (1, 2, 3 cols or rows)"
+              >
+                <ChevronDown className="w-3 h-3" />
               </button>
 
               {showFreezeMenu && (
-                <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-200 p-2 z-50 text-xs space-y-1.5">
+                <div className="absolute right-0 mt-1 top-full w-52 bg-white rounded-xl shadow-xl border border-slate-200 p-2 z-50 text-xs space-y-1.5">
                   <span className="text-[10px] uppercase font-bold text-slate-400 block px-1">
                     Freeze Columns
                   </span>
                   <div className="space-y-0.5">
                     <button
                       onClick={() => { setFreezeColumns(0); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeColumns === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
-                      No frozen columns
+                      Unfreeze (No frozen columns)
                     </button>
                     <button
                       onClick={() => { setFreezeColumns(1); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeColumns === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
                       Freeze 1 Col (#)
                     </button>
                     <button
                       onClick={() => { setFreezeColumns(2); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 2 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeColumns === 2 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
-                      Freeze 2 Cols (# + PO) ★
+                      Freeze 2 Cols (# + Customer Name) ★
                     </button>
                     <button
                       onClick={() => { setFreezeColumns(3); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeColumns === 3 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeColumns === 3 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
-                      Freeze 3 Cols (# + PO + Name)
+                      Freeze 3 Cols (# + Name + Date)
                     </button>
                   </div>
                   <span className="text-[10px] uppercase font-bold text-slate-400 block px-1 pt-1 border-t border-slate-100">
@@ -1070,13 +1930,13 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                   <div className="space-y-0.5">
                     <button
                       onClick={() => { setFreezeRows(1); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeRows === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeRows === 1 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
                       Freeze Header Row ★
                     </button>
                     <button
                       onClick={() => { setFreezeRows(0); setShowFreezeMenu(false); }}
-                      className={`w-full text-left px-2 py-1 rounded ${freezeRows === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
+                      className={`w-full text-left px-2 py-1 rounded cursor-pointer ${freezeRows === 0 ? 'bg-emerald-50 font-bold text-emerald-900' : 'hover:bg-slate-50 text-slate-700'}`}
                     >
                       No frozen rows
                     </button>
@@ -1084,6 +1944,28 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Clear Product Automation Button (when in Automation Tab) */}
+            {activeSheetTab === 'automation' && (
+              <button
+                onClick={handleClearProductAutomation}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-lg shadow-2xs transition-colors shrink-0 cursor-pointer"
+                title="Clear all active orders from Product Automation tab"
+              >
+                <Trash2 className="w-3 h-3 text-rose-600" />
+                <span>Clear Automation</span>
+              </button>
+            )}
+
+            {/* Full Clean Reset Button (Clean Slate 0 Rows) */}
+            <button
+              onClick={handleFullProjectClean}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg shadow-2xs transition-colors shrink-0 cursor-pointer"
+              title="Full Clean Reset to 0 rows for Google Sheet 1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q"
+            >
+              <RotateCcw className="w-3 h-3 text-slate-500" />
+              <span>Clean Slate (0 Rows)</span>
+            </button>
 
             {/* Columns Hide / Show Button */}
             <button
@@ -1097,9 +1979,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
 
             {/* Direct Excel Import Button */}
             <button
-              onClick={() => setShowImportModal(true)}
+              onClick={() => {
+                setImportError(null);
+                setShowImportModal(true);
+              }}
               className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg shadow-2xs transition-colors shrink-0"
-              title="Direct Import Excel / CSV Data"
+              title="Import Google Sheet (ID & Tab) or Excel"
             >
               <Upload className="w-3 h-3 text-blue-600" />
               <span>Import Excel</span>
@@ -1172,6 +2057,11 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
             onGenerateOrderNo={handleGenerateOrderNo}
             onGenerateAllPending={handleGenerateAllPendingOrderNo}
             onDeleteRow={handleDeleteItem}
+            onClearAllRows={handleClearAllProductOrders}
+            onOpenImportModal={() => {
+              setImportTabName('Product Order');
+              setShowImportModal(true);
+            }}
             onUpdateRow={handleUpdateProductOrderRow}
             onNavigateToAutomation={() => setActiveSheetTab('automation')}
             onAddNewRow={handleAddNewProductOrderRow}
@@ -1211,6 +2101,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                     bgColor = 'bg-amber-900 text-amber-100 border-r border-amber-800 font-extrabold';
                   } else if (col.sheetCol === 'Z') {
                     bgColor = 'bg-emerald-900 text-emerald-100 border-r border-emerald-800 font-extrabold';
+                  } else if (['AA', 'AB'].includes(col.sheetCol)) {
+                    bgColor = 'bg-teal-950 text-teal-200 border-r border-teal-900 font-bold';
+                  } else if (['AG', 'AH', 'AI'].includes(col.sheetCol)) {
+                    bgColor = 'bg-emerald-950 text-emerald-200 border-r border-emerald-900 font-bold';
+                  } else if (['AJ', 'AK', 'AL'].includes(col.sheetCol)) {
+                    bgColor = 'bg-sky-950 text-sky-200 border-r border-sky-900 font-bold';
                   } else if (col.sheetCol === 'AN') {
                     bgColor = 'bg-blue-900 text-blue-100 border-r border-blue-800 font-extrabold';
                   } else if (col.sheetCol === 'AO' || col.sheetCol === 'AP') {
@@ -1269,6 +2165,12 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                     bgHead = 'bg-amber-950 text-amber-200 border-r border-amber-800 font-bold';
                   } else if (col.sheetCol === 'Z') {
                     bgHead = 'bg-emerald-950 text-emerald-200 border-r border-emerald-800 font-bold';
+                  } else if (['AA', 'AB'].includes(col.sheetCol)) {
+                    bgHead = 'bg-teal-900 text-teal-100 border-r border-teal-800 font-bold min-w-[120px]';
+                  } else if (['AG', 'AH', 'AI'].includes(col.sheetCol)) {
+                    bgHead = 'bg-emerald-900 text-emerald-100 border-r border-emerald-800 font-bold min-w-[120px]';
+                  } else if (['AJ', 'AK', 'AL'].includes(col.sheetCol)) {
+                    bgHead = 'bg-sky-900 text-sky-100 border-r border-sky-800 font-bold min-w-[120px]';
                   } else if (col.sheetCol === 'AN') {
                     bgHead = 'bg-blue-950 text-sky-200 border-r border-blue-800 min-w-[140px] font-bold';
                   } else if (['A', 'B', 'C', 'D', 'E'].includes(col.sheetCol)) {
@@ -1318,27 +2220,106 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
                   </td>
                 </tr>
               ) : (
-                renderSpreadsheetRows(filteredOrders, viewMode === 'merged', visibleCols, freezeColumns, {
-                  onDispatchChange: handleDispatchChange,
-                  onItemStatusChange: handleItemStatusChange,
-                  onDeleteOrder: handleDeleteOrder,
-                  onDeleteItem: handleDeleteItem,
-                  onOpenOrderNoModal: setEditingOrderNo,
-                  onOpenAddItemModal: setAddingItemToOrder,
-                  onOpenConfirmWhatsAppModal: setConfirmWhatsAppModalOrder,
-                  onOpenWhatsAppModal: setWhatsAppModalOrder,
-                  aeStatuses,
-                  setAeStatuses,
-                  aoStatuses,
-                  setAoStatuses,
-                  lrNumbers,
-                  setLrNumbers,
-                  setSyncFeedback
-                })
+                renderSpreadsheetRows(
+                  paginatedOrders,
+                  viewMode === 'merged',
+                  visibleCols,
+                  freezeColumns,
+                  {
+                    onDispatchChange: handleDispatchChange,
+                    onItemStatusChange: handleItemStatusChange,
+                    onDeleteOrder: handleDeleteOrder,
+                    onDeleteItem: handleDeleteItem,
+                    onOpenOrderNoModal: setEditingOrderNo,
+                    onOpenAddItemModal: setAddingItemToOrder,
+                    onOpenConfirmWhatsAppModal: setConfirmWhatsAppModalOrder,
+                    onOpenWhatsAppModal: setWhatsAppModalOrder,
+                    acStatuses,
+                    setAcStatuses,
+                    anStatuses,
+                    setAnStatuses,
+                    lrNumbers,
+                    setLrNumbers,
+                    setSyncFeedback,
+                    colWStatuses,
+                    onUpdateColW: handleUpdateColW,
+                    colXRemarks,
+                    onUpdateColX: handleUpdateColX,
+                    colAEChecks,
+                    onToggleColAE: handleToggleColAE,
+                    colAFTimestamps,
+                    colAGRemarks,
+                    onUpdateColAG: handleUpdateColAG,
+                    colAHChecks,
+                    onToggleColAH: handleToggleColAH,
+                    colAITimestamps,
+                    colAJRemarks,
+                    onUpdateColAJ: handleUpdateColAJ
+                  },
+                  startRowNumber
+                )
               )}
             </tbody>
           </table>
         </div>
+        )}
+
+        {/* FAST VIRTUAL PAGINATION BAR (Prevents browser freeze & unresponsive page notifications) */}
+        {(activeSheetTab === 'automation' || activeSheetTab === 'closed') && filteredOrders.length > 0 && (
+          <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-slate-100 border-t border-slate-300 text-xs text-slate-700 select-none">
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-slate-800">
+                Showing {automationPageSize === 0 ? 1 : (safeAutomationPage - 1) * automationPageSize + 1}–
+                {automationPageSize === 0 ? filteredOrders.length : Math.min(safeAutomationPage * automationPageSize, filteredOrders.length)} of{' '}
+                <span className="font-bold text-emerald-700">{filteredOrders.length}</span> orders
+                <span className="text-slate-500 font-normal ml-1">({totalItemRows} rows total)</span>
+              </span>
+
+              <div className="flex items-center gap-1.5 ml-2 pl-3 border-l border-slate-300">
+                <span className="text-[11px] text-slate-500">Orders per page:</span>
+                <select
+                  value={automationPageSize}
+                  onChange={(e) => {
+                    setAutomationPageSize(Number(e.target.value));
+                    setAutomationPage(1);
+                  }}
+                  className="px-2 py-0.5 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+                >
+                  <option value={20}>20 orders</option>
+                  <option value={25}>25 orders (Recommended)</option>
+                  <option value={50}>50 orders</option>
+                  <option value={100}>100 orders</option>
+                  <option value={0}>All (May lag if &gt;500)</option>
+                </select>
+              </div>
+            </div>
+
+            {automationPageSize > 0 && totalAutomationPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setAutomationPage(p => Math.max(1, p - 1))}
+                  disabled={safeAutomationPage <= 1}
+                  className="px-2 py-1 rounded bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-xs font-medium cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                </button>
+
+                <span className="px-2 text-xs font-medium text-slate-600">
+                  Page <strong className="text-slate-900">{safeAutomationPage}</strong> of <strong>{totalAutomationPages}</strong>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setAutomationPage(p => Math.min(totalAutomationPages, p + 1))}
+                  disabled={safeAutomationPage >= totalAutomationPages}
+                  className="px-2 py-1 rounded bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-xs font-medium cursor-pointer"
+                >
+                  Next <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {/* COLUMN HEADER FILTER POPOVER (Works on EVERY Column with HIDE THIS COLUMN Option) */}
@@ -1515,79 +2496,404 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
         </div>
       </div>
 
-      {/* MODAL: DIRECT EXCEL / CSV DATA IMPORT */}
+      {/* MODAL: DIRECT GOOGLE SHEET (ID + TAB) & EXCEL / CSV DATA IMPORT */}
       {showImportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden">
-            <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden my-6">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-blue-950 text-white flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-sm flex items-center gap-2">
-                  <Upload className="w-4 h-4 text-blue-400" />
-                  Direct Import Excel / CSV Data into Grid
+                <h3 className="font-bold text-sm sm:text-base flex items-center gap-2">
+                  <Upload className="w-4 h-4 text-sky-400" />
+                  Import Google Sheet / Excel Data &amp; Sync to Firebase
                 </h3>
                 <p className="text-[11px] text-slate-300">
-                  Paste rows directly from Excel / Google Sheets or upload a .csv file
+                  Google Sheet ID aur Tab Name enter karke live data load karein ya direct paste karein
                 </p>
               </div>
-              <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-white">
-                <X className="w-4 h-4" />
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportError(null);
+                }}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4 text-xs">
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Option 1: Paste Excel / Google Sheets rows directly (Ctrl+V)
-                </label>
-                <textarea
-                  rows={8}
-                  value={pastedDataText}
-                  onChange={(e) => setPastedDataText(e.target.value)}
-                  placeholder="Paste rows copied directly from your Google Sheet or Excel here...&#10;Columns will be automatically mapped to PO, Customer, Items, Qty, Rate, etc."
-                  className="w-full p-2.5 border border-slate-300 rounded-lg font-mono text-[11px] focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-                />
+            {/* Mode Tabs */}
+            <div className="flex items-center border-b border-slate-200 bg-slate-50 px-6 pt-3 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setImportTabMode('sheet');
+                  setImportError(null);
+                }}
+                className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+                  importTabMode === 'sheet'
+                    ? 'border-blue-600 text-blue-900 bg-white rounded-t-lg shadow-2xs'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
+                <span>⚡ Live Google Sheet (ID + Tab)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setImportTabMode('paste');
+                  setImportError(null);
+                }}
+                className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+                  importTabMode === 'paste'
+                    ? 'border-emerald-600 text-emerald-900 bg-white rounded-t-lg shadow-2xs'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Copy className="w-3.5 h-3.5 text-emerald-600" />
+                <span>📋 Paste Rows (Ctrl+V)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setImportTabMode('file');
+                  setImportError(null);
+                }}
+                className={`pb-2.5 px-3 text-xs font-bold transition-all border-b-2 flex items-center gap-1.5 ${
+                  importTabMode === 'file'
+                    ? 'border-indigo-600 text-indigo-900 bg-white rounded-t-lg shadow-2xs'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                <span>📁 Upload File (.csv)</span>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs max-h-[75vh] overflow-y-auto">
+              {/* Error Callout */}
+              {importError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 flex items-start gap-2.5 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <span className="font-bold block text-xs">Import Issue:</span>
+                    <p className="text-[11px] leading-relaxed text-rose-800">{importError}</p>
+                    <p className="text-[10px] text-rose-700 font-medium">
+                      💡 Tip: Agar Sheet internal/private ho, toh Google Sheet me jaakar rows select karke <strong>Ctrl+C</strong> karein aur yahan <strong>"Paste Rows (Ctrl+V)"</strong> tab me paste kar dein!
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 1: GOOGLE SHEET ID & TAB NAME */}
+              {importTabMode === 'sheet' && (
+                <div className="space-y-4">
+                  {/* Google Sheet ID input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold text-slate-800 flex items-center gap-1">
+                        <Link2 className="w-3.5 h-3.5 text-blue-600" />
+                        Google Sheet ID ya Full Sheet URL:
+                      </label>
+                      <span className="text-[10px] text-slate-500">
+                        URL paste karne par ID auto-extract hoti hai
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      value={importSheetId}
+                      onChange={(e) => {
+                        setImportSheetId(e.target.value);
+                        setImportError(null);
+                      }}
+                      placeholder="e.g. 14cIoLK1Z8Ihj1DakVtHvk-QPrCfJzQu2hco26MBHiYk"
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                    />
+                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
+                      <span>
+                        Extracted ID:{' '}
+                        <code className="text-blue-800 font-bold font-mono">
+                          {extractSheetId(importSheetId) || 'None'}
+                        </code>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImportSheetId('1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q')
+                        }
+                        className="text-blue-600 hover:underline font-bold"
+                      >
+                        Reset Default ID
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tab / Sheet Name input */}
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-800 block mb-1">
+                      Tab / Sheet Name (Google Sheet ke bottom tab ka naam):
+                    </label>
+                    <input
+                      type="text"
+                      value={importTabName}
+                      onChange={(e) => {
+                        setImportTabName(e.target.value);
+                        setImportError(null);
+                      }}
+                      placeholder="e.g. Product Order / Product Automation"
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-medium focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                    />
+                    {/* Quick Selection Chips */}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-500 font-medium">Quick Pick:</span>
+                      <button
+                        type="button"
+                        onClick={() => setImportTabName('Product Order')}
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                          importTabName === 'Product Order'
+                            ? 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
+                            : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        Product Order (19 Columns A-S) ★
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportTabName('Product Automation')}
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                          importTabName === 'Product Automation'
+                            ? 'bg-blue-100 border-blue-400 text-blue-900 font-bold'
+                            : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        Product Automation (43 Columns A-AQ)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportTabName('Closed Orders')}
+                        className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+                          importTabName === 'Closed Orders'
+                            ? 'bg-blue-100 border-blue-400 text-blue-900'
+                            : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        Closed Orders
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Query Formula Info Box */}
+                  <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200 space-y-1.5">
+                    <div className="flex items-center justify-between text-blue-950 font-bold text-[11px]">
+                      <span>Google Sheet IMPORTRANGE Query Formula:</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-200 text-blue-900 font-mono">Connected</span>
+                    </div>
+                    <code className="block bg-white p-2 rounded border border-blue-200 text-[10px] text-blue-900 font-mono leading-relaxed break-all select-all">
+                      =QUERY(IMPORTRANGE("1TksqSeCWat_0CRRPTxA0nAMiQFtUO17xUhtqHJM2JAs", "Orders!A:R"), "select Col1, Col2,Col8,Col9, Col10, Col11, Col12, Col13, Col14, Col15, Col16, Col17, Col18, Col3, Col4, Col5, Col6, Col7 ", 1)
+                    </code>
+                    <p className="text-[10px] text-blue-700">
+                      Product Order tab me Orders!A:R se data query se aata hai aur Col S me Order Number enter hota hai.
+                    </p>
+                  </div>
+
+                  {/* Firebase Auto-Sync Checkbox card */}
+                  <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/90 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoSyncToFirebase}
+                        onChange={(e) => setAutoSyncToFirebase(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                        <Flame className="w-3.5 h-3.5 fill-amber-600 text-amber-600" />
+                        Auto-save imported data to Firebase Realtime Database
+                      </span>
+                    </label>
+                    <div className="pl-6 text-[10px] text-amber-900/80 space-y-0.5">
+                      <p>
+                        Data import hote hi direct Firebase me batch update ho jayega taaki aapka data cloud me permanently save rahe aur har device par live show ho.
+                      </p>
+                      <p className="font-mono text-slate-600 truncate">
+                        Target: <span className="text-amber-800">{firebaseUrl}</span> (Auth Secret: Configured ✓)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Guidance Note */}
+                  <div className="p-3 bg-sky-50 rounded-xl border border-sky-200 text-sky-950 text-[11px] leading-relaxed">
+                    <span className="font-bold block text-sky-900 mb-0.5">📌 Permission Note for Google Sheets:</span>
+                    Google Sheets se direct fetch karne ke liye Sheet ka link sharing <strong>"Anyone with the link can view"</strong> hona chahiye.
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: PASTE ROWS DIRECTLY */}
+              {importTabMode === 'paste' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                      Paste rows directly copied from Google Sheets / Excel (Ctrl+V):
+                    </label>
+                    <textarea
+                      rows={8}
+                      value={pastedDataText}
+                      onChange={(e) => setPastedDataText(e.target.value)}
+                      placeholder="Google Sheet me rows select karke Ctrl+C karein aur yahan Ctrl+V karein...&#10;Columns automatically PO, Customer, Items, Qty, Rate, Dispatch, Status etc. me map honge."
+                      className="w-full p-2.5 border border-slate-300 rounded-lg font-mono text-[11px] focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Firebase Auto-Sync Checkbox card */}
+                  <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/90">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoSyncToFirebase}
+                        onChange={(e) => setAutoSyncToFirebase(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                        <Flame className="w-3.5 h-3.5 fill-amber-600 text-amber-600" />
+                        Save pasted data to Firebase Realtime Database
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: FILE UPLOAD */}
+              {importTabMode === 'file' && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                      Select a .CSV or .TXT file from your computer:
+                    </label>
+                    <input
+                      type="file"
+                      accept=".csv,.tsv,.txt"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const content = event.target?.result as string;
+                            if (content) setPastedDataText(content);
+                          };
+                          reader.readAsText(file);
+                        }
+                      }}
+                      className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer"
+                    />
+                  </div>
+
+                  {pastedDataText && (
+                    <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono text-slate-600 max-h-28 overflow-y-auto">
+                      File loaded (~{pastedDataText.split('\n').filter(Boolean).length} rows detected)
+                    </div>
+                  )}
+
+                  {/* Firebase Auto-Sync Checkbox card */}
+                  <div className="p-3 bg-amber-50/70 rounded-xl border border-amber-200/90">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoSyncToFirebase}
+                        onChange={(e) => setAutoSyncToFirebase(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span className="font-bold text-xs text-amber-950 flex items-center gap-1.5">
+                        <Flame className="w-3.5 h-3.5 fill-amber-600 text-amber-600" />
+                        Save uploaded data to Firebase Realtime Database
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Mode Card: Clean 1:1 Fresh Upload vs Append */}
+              <div className="p-3 bg-blue-50/80 rounded-xl border border-blue-200 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-blue-950 flex items-center gap-1.5">
+                    <span>⚡ Upload Mode:</span>
+                  </span>
+                  <span className="text-[10px] text-blue-800 font-semibold bg-blue-100 px-2 py-0.5 rounded-full border border-blue-300">
+                    Recommended: Replace All (Zero Duplicates)
+                  </span>
+                </div>
+                <div className="space-y-1.5 pl-1">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-900 select-none">
+                    <input
+                      type="radio"
+                      name="importReplaceMode"
+                      checked={importReplaceMode}
+                      onChange={() => setImportReplaceMode(true)}
+                      className="text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                    />
+                    <span>✓ Replace All Rows (Clean 1:1 Fresh Upload — Purges old/duplicate rows)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-medium text-slate-600 select-none">
+                    <input
+                      type="radio"
+                      name="importReplaceMode"
+                      checked={!importReplaceMode}
+                      onChange={() => setImportReplaceMode(false)}
+                      className="text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                    />
+                    <span>Append to Existing Rows (Add rows below current data)</span>
+                  </label>
+                </div>
               </div>
 
-              <div>
-                <label className="text-[11px] font-semibold text-slate-700 block mb-1">
-                  Option 2: Select a .CSV / .TXT file from your computer
-                </label>
-                <input
-                  type="file"
-                  accept=".csv,.tsv,.txt"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (event) => {
-                        const content = event.target?.result as string;
-                        if (content) setPastedDataText(content);
-                      };
-                      reader.readAsText(file);
-                    }
-                  }}
-                  className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-                />
-              </div>
-
-              <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                <span className="text-[11px] text-slate-400">
-                  Supports comma (,) and tab-separated formats
+              {/* Action Buttons */}
+              <div className="pt-3 flex items-center justify-between border-t border-slate-200">
+                <span className="text-[11px] text-slate-500">
+                  Multiple times import kar sakte hain — clean 1:1 mapping ensure hogi!
                 </span>
+
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setShowImportModal(false)}
-                    className="px-3.5 py-1.5 text-slate-600 hover:text-slate-800"
+                    type="button"
+                    onClick={() => {
+                      setShowImportModal(false);
+                      setImportError(null);
+                    }}
+                    className="px-3.5 py-1.5 text-slate-600 hover:text-slate-800 font-medium"
                   >
                     Cancel
                   </button>
-                  <button
-                    onClick={() => handleParseImportedData(pastedDataText)}
-                    disabled={!pastedDataText.trim()}
-                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-50"
-                  >
-                    Import into Sheet Grid
-                  </button>
+
+                  {importTabMode === 'sheet' ? (
+                    <button
+                      type="button"
+                      disabled={isFetchingSheet || !importSheetId.trim() || !importTabName.trim()}
+                      onClick={handleFetchFromGoogleSheet}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg disabled:opacity-50 flex items-center gap-1.5 shadow-sm transition-all"
+                    >
+                      {isFetchingSheet ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Fetching Google Sheet...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-4 h-4" />
+                          <span>Fetch &amp; Import from Sheet</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!pastedDataText.trim()}
+                      onClick={() => handleParseImportedData(pastedDataText, autoSyncToFirebase, importTabMode === 'paste' ? 'Pasted Data' : 'Uploaded File')}
+                      className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg disabled:opacity-50 flex items-center gap-1.5 shadow-sm transition-all"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Import into Sheet Grid</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1711,26 +3017,48 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
 
             <div className="p-6 space-y-4 text-xs">
               <div className="bg-amber-50 p-3.5 rounded-xl border border-amber-200 text-amber-950 space-y-1">
-                <span className="font-bold block text-sm">Historical Data Upload Process:</span>
+                <span className="font-bold block text-sm flex items-center gap-1.5">
+                  <Database className="w-4 h-4 text-amber-700" />
+                  Firebase Data Kahan Save Hota Hai?
+                </span>
                 <p className="text-[11px] text-amber-900/90 leading-relaxed">
-                  Aapke Google Sheet ke saare purane 10,000–1,00,000 orders ko Firebase me 1 click me upload kiya ja sakta hai. Upload hone ke baad yeh application direct Firebase se data load karegi aur <strong>0% hang</strong> hogi!
+                  Data <strong>Firebase Console &gt; Build &gt; Realtime Database &gt; Data</strong> tab me <code>/product_automation</code> aur <code>/closed_orders</code> me save hota hai.
+                  (Firestore Database me nahi, Realtime Database me check karein!)
                 </p>
               </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 block mb-1">
-                  Firebase Realtime Database URL:
-                </label>
-                <input
-                  type="text"
-                  value={firebaseUrl}
-                  onChange={(e) => setFirebaseUrl(e.target.value)}
-                  placeholder="https://your-app-default-rtdb.firebaseio.com"
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono"
-                />
-                <span className="text-[10px] text-slate-500 mt-0.5 block">
-                  Firebase Console &gt; Build &gt; Realtime Database me upar di hui URL
-                </span>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    Firebase Realtime Database URL:
+                  </label>
+                  <input
+                    type="text"
+                    value={firebaseUrl}
+                    onChange={(e) => setFirebaseUrl(e.target.value)}
+                    placeholder="https://your-project-id-default-rtdb.firebaseio.com"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono focus:ring-1 focus:ring-amber-500 focus:outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    📌 <strong>URL Kahan Milegi:</strong> Firebase Console &gt; Left menu <strong>Build</strong> &gt; <strong>Realtime Database</strong> &gt; Data tab ke bilkul upar di hui URL copy karke yahan paste karein.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    Firebase Database Secret (Auth Token):
+                  </label>
+                  <input
+                    type="text"
+                    value={firebaseSecret}
+                    onChange={(e) => setFirebaseSecret(e.target.value)}
+                    placeholder="iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J"
+                    className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg font-mono focus:ring-1 focus:ring-amber-500 focus:outline-none bg-slate-50"
+                  />
+                  <span className="text-[10px] text-slate-500 mt-0.5 block">
+                    Firebase Console &gt; Project Settings &gt; Service Accounts &gt; Database Secrets
+                  </span>
+                </div>
               </div>
 
               {/* Upload Progress Bar if active */}
@@ -1753,27 +3081,65 @@ export const SpreadsheetSimulator: React.FC<SpreadsheetSimulatorProps> = ({
               )}
 
               {/* Action Buttons */}
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.setItem(LOCAL_STORAGE_FIREBASE_CONFIG, JSON.stringify({ url: firebaseUrl }));
-                    setSyncFeedback('Saved Firebase URL to application settings!');
-                    setTimeout(() => setSyncFeedback(null), 3000);
-                  }}
-                  className="w-full sm:w-auto px-4 py-2 border border-slate-300 rounded-lg font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  Save URL
-                </button>
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.setItem(
+                        LOCAL_STORAGE_FIREBASE_CONFIG,
+                        JSON.stringify({ url: firebaseUrl, secret: firebaseSecret })
+                      );
+                      setSyncFeedback('Saved Firebase URL & Secret Token to application!');
+                      setTimeout(() => setSyncFeedback(null), 3000);
+                    }}
+                    className="w-full sm:w-auto px-3.5 py-2 border border-slate-300 rounded-lg font-medium text-slate-700 hover:bg-slate-50 text-xs"
+                  >
+                    Save Config
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const targetUrl = firebaseUrl.trim().replace(/\/+$/, '');
+                        const authParam = firebaseSecret ? `?auth=${encodeURIComponent(firebaseSecret)}` : '';
+                        const testUrl = `${targetUrl}/_connection_test.json${authParam}`;
+                        setSyncFeedback('Testing Firebase connection...');
+                        const resp = await fetch(testUrl, {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            tested_at: new Date().toISOString(),
+                            status: 'Connected',
+                            client: 'GINZA Web FMS'
+                          })
+                        });
+                        if (resp.ok) {
+                          setSyncFeedback(`✓ Firebase Connected Successfully! (HTTP ${resp.status})`);
+                        } else {
+                          const errTxt = await resp.text();
+                          setSyncFeedback(`Firebase Connection Failed: HTTP ${resp.status} - ${errTxt.substring(0, 100)}`);
+                        }
+                      } catch (err: any) {
+                        setSyncFeedback(`Firebase Test Error: ${err.message || 'Network error'}`);
+                      }
+                      setTimeout(() => setSyncFeedback(null), 5000);
+                    }}
+                    className="w-full sm:w-auto px-3.5 py-2 border border-amber-300 bg-amber-50 rounded-lg font-semibold text-amber-900 hover:bg-amber-100 text-xs"
+                  >
+                    📡 Test Ping
+                  </button>
+                </div>
 
                 <button
                   type="button"
                   disabled={uploadProgress !== null}
                   onClick={handleUploadToFirebase}
-                  className="w-full sm:w-auto px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow-sm flex items-center justify-center gap-2"
+                  className="w-full sm:w-auto px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 text-xs"
                 >
                   <CloudUpload className="w-4 h-4" />
-                  <span>1-Click Upload Sheet Data to Firebase</span>
+                  <span>1-Click Upload Data to Firebase</span>
                 </button>
               </div>
             </div>
@@ -2094,16 +3460,31 @@ function renderSpreadsheetRows(
     onOpenAddItemModal: (order: GroupedOrder) => void;
     onOpenConfirmWhatsAppModal: (order: GroupedOrder) => void;
     onOpenWhatsAppModal: (order: GroupedOrder) => void;
-    aeStatuses: Record<string, string>;
-    setAeStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-    aoStatuses: Record<string, string>;
-    setAoStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    acStatuses: Record<string, string>;
+    setAcStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    anStatuses: Record<string, string>;
+    setAnStatuses: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     lrNumbers: Record<string, string>;
     setLrNumbers: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     setSyncFeedback: (msg: string | null) => void;
-  }
+    colWStatuses: Record<string, string>;
+    onUpdateColW: (orderKey: string, val: string) => void;
+    colXRemarks: Record<string, string>;
+    onUpdateColX: (orderKey: string, val: string) => void;
+    colAEChecks: Record<string, boolean>;
+    onToggleColAE: (orderKey: string, checked: boolean) => void;
+    colAFTimestamps: Record<string, string>;
+    colAGRemarks: Record<string, string>;
+    onUpdateColAG: (orderKey: string, val: string) => void;
+    colAHChecks: Record<string, boolean>;
+    onToggleColAH: (orderKey: string, checked: boolean) => void;
+    colAITimestamps: Record<string, string>;
+    colAJRemarks: Record<string, string>;
+    onUpdateColAJ: (orderKey: string, val: string) => void;
+  },
+  startRowIndex: number = 2
 ) {
-  let rowNumber = 2; // Sheets start row 2
+  let rowNumber = startRowIndex; // Sheets start row 2 (or offset for page)
   const rows: React.ReactNode[] = [];
 
   orders.forEach((order) => {
@@ -2155,7 +3536,7 @@ function renderSpreadsheetRows(
                   <Plus className="w-3 h-3" />
                 </button>
                 <button
-                  onClick={() => handlers.onDeleteOrder(order.orderKey, order.customerPO)}
+                  onClick={() => handlers.onDeleteOrder(order.orderKey, order.customerPO || order.orderKey)}
                   className="p-0.5 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                   title="Delete this entire order"
                 >
@@ -2165,7 +3546,7 @@ function renderSpreadsheetRows(
             </td>
           ) : null}
 
-          {/* COLUMNS A TO E: VERTICAL MERGE */}
+          {/* COLUMNS A TO C: VERTICAL MERGE */}
           {showHeaderCols && (
             <>
               {/* Col A: Timestamp */}
@@ -2178,14 +3559,14 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col B: Customer PO */}
+              {/* Col B: Customer Name */}
               {visibleCols['B'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-bold text-slate-900 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${poSticky} ${cellBottomBorder}`}
                 >
                   <div className="flex items-center gap-1">
-                    <span className={order.customerPO === '5281' ? 'text-emerald-700 font-extrabold' : ''}>{order.customerPO}</span>
+                    <span className="font-bold text-slate-900">{order.customerName}</span>
                     {useMerge && order.items.length > 1 && (
                       <span className="text-[9px] px-1 py-0.1 rounded-full bg-blue-100 text-blue-800 font-mono font-bold">
                         {order.items.length} itm
@@ -2195,31 +3576,11 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col C: Customer Name */}
+              {/* Col C: Order Date */}
               {visibleCols['C'] && (
                 <td
                   rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-semibold text-slate-800 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${nameSticky} ${cellBottomBorder}`}
-                >
-                  {order.customerName}
-                </td>
-              )}
-
-              {/* Col D: Customer Email */}
-              {visibleCols['D'] && (
-                <td
-                  rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap text-[10px] ${cellBottomBorder}`}
-                >
-                  {order.customerEmail}
-                </td>
-              )}
-
-              {/* Col E: Order Date */}
-              {visibleCols['E'] && (
-                <td
-                  rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
+                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
                 >
                   {order.orderDate}
                 </td>
@@ -2227,9 +3588,9 @@ function renderSpreadsheetRows(
             </>
           )}
 
-          {/* COLUMNS F TO N: INDIVIDUAL PRODUCT ITEM ROWS (NEVER MERGED) */}
-          {/* Col F: Unit */}
-          {visibleCols['F'] && (
+          {/* COLUMNS D TO L: INDIVIDUAL PRODUCT ITEM ROWS (UNMERGED) */}
+          {/* Col D: Unit */}
+          {visibleCols['D'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 whitespace-nowrap font-medium text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2237,8 +3598,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col G: Item Name */}
-          {visibleCols['G'] && (
+          {/* Col E: Item Name */}
+          {visibleCols['E'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-semibold text-slate-900 whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2260,8 +3621,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col H: Color */}
-          {visibleCols['H'] && (
+          {/* Col F: Color */}
+          {visibleCols['F'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2269,8 +3630,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col I: Width */}
-          {visibleCols['I'] && (
+          {/* Col G: Width */}
+          {visibleCols['G'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2278,8 +3639,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col J: Unit (of Item) */}
-          {visibleCols['J'] && (
+          {/* Col H: Unit (of item) */}
+          {visibleCols['H'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2287,8 +3648,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col K: Qty */}
-          {visibleCols['K'] && (
+          {/* Col I: Qty */}
+          {visibleCols['I'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-mono font-bold text-slate-900 text-right whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2296,8 +3657,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col L: Rate */}
-          {visibleCols['L'] && (
+          {/* Col J: Rate */}
+          {visibleCols['J'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-mono text-slate-700 text-right whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2305,8 +3666,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col M: Discount */}
-          {visibleCols['M'] && (
+          {/* Col K: Discount */}
+          {visibleCols['K'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-mono text-slate-700 text-right whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2314,8 +3675,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* Col N: Delivery Date */}
-          {visibleCols['N'] && (
+          {/* Col L: Delivery Date */}
+          {visibleCols['L'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 whitespace-nowrap text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2323,11 +3684,11 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* COLUMNS O TO X: VERTICAL MERGE */}
+          {/* COLUMNS M TO T: VERTICAL MERGE */}
           {showHeaderCols && (
             <>
-              {/* Col O: Remark */}
-              {visibleCols['O'] && (
+              {/* Col M: Remark */}
+              {visibleCols['M'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate text-[11px] ${cellBottomBorder}`}
@@ -2337,8 +3698,8 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col P: Customer Number */}
-              {visibleCols['P'] && (
+              {/* Col N: Customer Number */}
+              {visibleCols['N'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-mono text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
@@ -2347,8 +3708,8 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col Q: Billing Address */}
-              {visibleCols['Q'] && (
+              {/* Col O: Billing Address */}
+              {visibleCols['O'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate text-[11px] ${cellBottomBorder}`}
@@ -2358,8 +3719,8 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col R: Delivery Address */}
-              {visibleCols['R'] && (
+              {/* Col P: Delivery Address */}
+              {visibleCols['P'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap max-w-[180px] truncate text-[11px] ${cellBottomBorder}`}
@@ -2369,18 +3730,8 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col S: Transporter Name */}
-              {visibleCols['S'] && (
-                <td
-                  rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
-                >
-                  {order.transporterName}
-                </td>
-              )}
-
-              {/* Col T: Sales Person Name */}
-              {visibleCols['T'] && (
+              {/* Col Q: Sales Person Name */}
+              {visibleCols['Q'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
@@ -2389,40 +3740,18 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col U: Account Status */}
-              {visibleCols['U'] && (
+              {/* Col R: Sales Person Contact */}
+              {visibleCols['R'] && (
                 <td
                   rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}
+                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap font-mono text-[11px] ${cellBottomBorder}`}
                 >
-                  <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[10px] font-medium">
-                    {order.accountStatus || 'Approved'}
-                  </span>
+                  {order.salesPersonContact || '—'}
                 </td>
               )}
 
-              {/* Col V: Approval */}
-              {visibleCols['V'] && (
-                <td
-                  rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
-                >
-                  {order.approvalStatus}
-                </td>
-              )}
-
-              {/* Col W: Approval Timestamp */}
-              {visibleCols['W'] && (
-                <td
-                  rowSpan={rowSpan}
-                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle bg-blue-50/20 whitespace-nowrap text-[10px] ${cellBottomBorder}`}
-                >
-                  {order.branch}
-                </td>
-              )}
-
-              {/* Col X: Order Number (Editable) */}
-              {visibleCols['X'] && (
+              {/* Col S: Order No (Editable with Modal) */}
+              {visibleCols['S'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 font-mono font-medium text-slate-900 align-middle bg-blue-50/20 whitespace-nowrap text-[11px] ${cellBottomBorder}`}
@@ -2434,21 +3763,31 @@ function renderSpreadsheetRows(
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handlers.onOpenOrderNoModal({ key: order.orderKey, po: order.customerPO, value: order.orderNo });
+                        handlers.onOpenOrderNoModal({ key: order.orderKey, po: order.customerPO || '', value: order.orderNo });
                       }}
                       className="text-slate-400 hover:text-emerald-700 p-0.5 rounded transition-colors"
-                      title="Edit Order Number in Col X"
+                      title="Edit Order Number in Col S"
                     >
                       <Edit3 className="w-2.5 h-2.5" />
                     </button>
                   </div>
                 </td>
               )}
+
+              {/* Col T: Customer Mail Id */}
+              {visibleCols['T'] && (
+                <td
+                  rowSpan={rowSpan}
+                  className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle bg-blue-50/20 whitespace-nowrap text-[10px] ${cellBottomBorder}`}
+                >
+                  {order.customerMailId || order.customerEmail || '—'}
+                </td>
+              )}
             </>
           )}
 
-          {/* COLUMN Y: DISPATCH QNT (MANUAL USER ENTRY PER ITEM ROW) */}
-          {visibleCols['Y'] && (
+          {/* COLUMN U: DISPATCH QNT (ITEM ROW USER ENTRY) */}
+          {visibleCols['U'] && (
             <td
               className={`px-1.5 py-0.5 border-r border-slate-300 bg-amber-50/40 whitespace-nowrap text-right ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2465,8 +3804,8 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* COLUMN Z: BALANCE QNT (= K - Y) */}
-          {visibleCols['Z'] && (
+          {/* COLUMN V: BALANCE QNT (= I - U) */}
+          {visibleCols['V'] && (
             <td
               className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 bg-emerald-50/40 whitespace-nowrap text-right text-[11px] ${useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''}`}
             >
@@ -2499,38 +3838,76 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* EXTRA OPERATIONAL COLUMNS AA TO AM (IF VISIBLE) */}
+          {/* OPERATIONAL COLUMNS W TO AL: VERTICALLY MERGED */}
           {showHeaderCols && (
             <>
-              {visibleCols['AA'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle text-[11px] ${cellBottomBorder}`}>
-                  Active
+              {/* Col W: Status (Manual User Text Edit with Auto-Save) */}
+              {visibleCols['W'] && (
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 align-middle ${cellBottomBorder}`}>
+                  <input
+                    type="text"
+                    placeholder="Status..."
+                    value={handlers.colWStatuses[currentOrderKey] ?? (order.accountStatus || 'In Production')}
+                    onChange={(e) => handlers.onUpdateColW(currentOrderKey, e.target.value)}
+                    className="w-28 px-1.5 py-0.5 border border-teal-300 rounded text-[11px] font-semibold text-slate-800 bg-teal-50/20 focus:bg-white focus:outline-none focus:ring-1 focus:ring-teal-500 h-6 shadow-2xs"
+                    title="Col W: Editable Status (Auto-saved)"
+                  />
                 </td>
               )}
-              {visibleCols['AB'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-400 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+
+              {/* Col X: Remark (Manual User Text Edit with Auto-Save) */}
+              {visibleCols['X'] && (
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 align-middle ${cellBottomBorder}`}>
+                  <input
+                    type="text"
+                    placeholder="Remark..."
+                    value={handlers.colXRemarks[currentOrderKey] ?? ''}
+                    onChange={(e) => handlers.onUpdateColX(currentOrderKey, e.target.value)}
+                    className="w-32 px-1.5 py-0.5 border border-slate-300 rounded text-[11px] text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 h-6 shadow-2xs"
+                    title="Col X: Editable Logistics Remark (Auto-saved)"
+                  />
                 </td>
               )}
-              {visibleCols['AC'] && (
+
+              {/* Col Y: Approval */}
+              {visibleCols['Y'] && (
                 <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle text-[11px] ${cellBottomBorder}`}>
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[10px] font-semibold">
+                    {order.approvalStatus || 'APPROVED'}
+                  </span>
+                </td>
+              )}
+
+              {/* Col Z: Timestamp */}
+              {visibleCols['Z'] && (
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle text-[10px] font-mono ${cellBottomBorder} whitespace-nowrap`}>
+                  {order.orderNoTimestamp || order.timestamp}
+                </td>
+              )}
+
+              {/* Col AA: Confirmation Mail */}
+              {visibleCols['AA'] && (
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle text-[11px] font-medium text-center ${cellBottomBorder}`}>
                   Sent
                 </td>
               )}
-              {visibleCols['AD'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-emerald-700 font-medium align-middle text-[11px] ${cellBottomBorder}`}>
+
+              {/* Col AB: Mail Status */}
+              {visibleCols['AB'] && (
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-emerald-700 font-medium align-middle text-[11px] text-center ${cellBottomBorder}`}>
                   Delivered
                 </td>
               )}
-              {/* Col AE: Instant Confirmation Msg */}
-              {visibleCols['AE'] && (
+
+              {/* Col AC: Confirmation Msg (WhatsApp Sent) */}
+              {visibleCols['AC'] && (
                 <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-blue-50/20 whitespace-nowrap ${cellBottomBorder}`}>
                   <select
-                    value={handlers.aeStatuses[currentOrderKey] || 'Pending'}
+                    value={handlers.acStatuses[currentOrderKey] || 'Pending'}
                     onChange={(e) => {
                       const val = e.target.value;
-                      handlers.setAeStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
-                      handlers.setSyncFeedback(`Col AE Confirmation set to "${val}". ${val === 'Message Sent' ? 'Instant WhatsApp link active in Col AF!' : 'Pending status.'}`);
+                      handlers.setAcStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
+                      handlers.setSyncFeedback(`Col AC Confirmation set to "${val}". ${val === 'Message Sent' ? 'WhatsApp link active in Col AD!' : 'Pending status.'}`);
                       setTimeout(() => handlers.setSyncFeedback(null), 3500);
                     }}
                     className="text-[10px] bg-white border border-blue-300 rounded px-1.5 py-0.5 font-medium text-slate-800 focus:ring-1 focus:ring-blue-500 focus:outline-none h-6"
@@ -2541,56 +3918,114 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col AF: Whatspp Link (Instant Confirmation AE ➔ AF) */}
-              {visibleCols['AF'] && (
+              {/* Col AD: Whatspp Link (Instant Confirmation AC ➔ AD) */}
+              {visibleCols['AD'] && (
                 <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}>
-                  {(handlers.aeStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
-                    <button
-                      onClick={() => handlers.onOpenConfirmWhatsAppModal(order)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
-                      title="Send Instant Order Confirmation WhatsApp (AE ➔ AF)"
-                    >
-                      <MessageSquare className="w-3 h-3" />
-                      <span>Send WA</span>
-                      <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
-                    </button>
+                  <button
+                    onClick={() => handlers.onOpenConfirmWhatsAppModal(order)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
+                    title="Send Order Confirmation WhatsApp"
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    <span>Send WA</span>
+                    <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
+                  </button>
+                </td>
+              )}
+
+              {/* Col AE: Follow-up 1 (CHECKBOX - when clicked, auto timestamp in Col AF) */}
+              {visibleCols['AE'] && (
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-center align-middle ${cellBottomBorder} bg-emerald-50/30`}>
+                  <label className="inline-flex items-center justify-center cursor-pointer p-0.5" title="Check to record Follow-up 1 timestamp in Col AF">
+                    <input
+                      type="checkbox"
+                      checked={!!handlers.colAEChecks[currentOrderKey]}
+                      onChange={(e) => handlers.onToggleColAE(currentOrderKey, e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer shadow-2xs"
+                    />
+                  </label>
+                </td>
+              )}
+
+              {/* Col AF: Timestamp (Auto-generated from Col AE Checkbox) */}
+              {visibleCols['AF'] && (
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 align-middle text-[10px] font-mono ${cellBottomBorder} whitespace-nowrap bg-emerald-50/10`}>
+                  {handlers.colAFTimestamps[currentOrderKey] ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300 font-bold">
+                      <Clock className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span>{handlers.colAFTimestamps[currentOrderKey]}</span>
+                    </span>
                   ) : (
-                    <span className="text-slate-400 font-mono text-[10px] italic">—</span>
+                    <span className="text-slate-300 italic text-[10px]">—</span>
                   )}
                 </td>
               )}
+
+              {/* Col AG: Follow-up 1 Remark (Manual User Text Edit with Auto-Save - EDITABLE!) */}
               {visibleCols['AG'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 align-middle ${cellBottomBorder}`}>
+                  <input
+                    type="text"
+                    placeholder="Follow-up 1 remark..."
+                    value={handlers.colAGRemarks[currentOrderKey] ?? ''}
+                    onChange={(e) => handlers.onUpdateColAG(currentOrderKey, e.target.value)}
+                    className="w-36 px-1.5 py-0.5 border border-slate-300 rounded text-[11px] text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500 h-6 shadow-2xs"
+                    title="Col AG: Editable Follow-up 1 Remark (Auto-saved)"
+                  />
                 </td>
               )}
+
+              {/* Col AH: Follow-up 2 (CHECKBOX - when clicked, auto timestamp in Col AI) */}
               {visibleCols['AH'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-center align-middle ${cellBottomBorder} bg-sky-50/30`}>
+                  <label className="inline-flex items-center justify-center cursor-pointer p-0.5" title="Check to record Follow-up 2 timestamp in Col AI">
+                    <input
+                      type="checkbox"
+                      checked={!!handlers.colAHChecks[currentOrderKey]}
+                      onChange={(e) => handlers.onToggleColAH(currentOrderKey, e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer shadow-2xs"
+                    />
+                  </label>
                 </td>
               )}
+
+              {/* Col AI: Timestamp (Auto-generated from Col AH Checkbox) */}
               {visibleCols['AI'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 align-middle text-[10px] font-mono ${cellBottomBorder} whitespace-nowrap bg-sky-50/10`}>
+                  {handlers.colAITimestamps[currentOrderKey] ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 text-sky-900 border border-sky-300 font-bold">
+                      <Clock className="w-3 h-3 text-sky-600 shrink-0" />
+                      <span>{handlers.colAITimestamps[currentOrderKey]}</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-300 italic text-[10px]">—</span>
+                  )}
                 </td>
               )}
+
+              {/* Col AJ: Follow-up 2 Remark (Manual User Text Edit with Auto-Save - EDITABLE!) */}
               {visibleCols['AJ'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+                <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 align-middle ${cellBottomBorder}`}>
+                  <input
+                    type="text"
+                    placeholder="Follow-up 2 remark..."
+                    value={handlers.colAJRemarks[currentOrderKey] ?? ''}
+                    onChange={(e) => handlers.onUpdateColAJ(currentOrderKey, e.target.value)}
+                    className="w-36 px-1.5 py-0.5 border border-slate-300 rounded text-[11px] text-slate-800 bg-white focus:outline-none focus:ring-1 focus:ring-sky-500 h-6 shadow-2xs"
+                    title="Col AJ: Editable Follow-up 2 Remark (Auto-saved)"
+                  />
                 </td>
               )}
+
+              {/* Col AK: Transport Name */}
               {visibleCols['AK'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
+                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-700 align-middle text-[11px] ${cellBottomBorder}`}>
+                  {order.transporterName || 'Atc express'}
                 </td>
               )}
+
+              {/* Col AL: LR- Number */}
               {visibleCols['AL'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-500 align-middle text-[11px] ${cellBottomBorder}`}>
-                  —
-                </td>
-              )}
-              {/* Col AM: LR- Number */}
-              {visibleCols['AM'] && (
                 <td rowSpan={rowSpan} className={`px-1.5 py-0.5 border-r border-slate-300 font-mono text-slate-800 align-middle ${cellBottomBorder}`}>
                   <input
                     type="text"
@@ -2607,8 +4042,8 @@ function renderSpreadsheetRows(
             </>
           )}
 
-          {/* COLUMN AN: OPEN / CLOSE (INDIVIDUAL PRODUCT ITEM ROW - NEVER MERGED, LIKE F-N AND Y-Z) */}
-          {visibleCols['AN'] && (
+          {/* COLUMN AM: OPEN / CLOSE (INDIVIDUAL PRODUCT ITEM ROW - UNMERGED) */}
+          {visibleCols['AM'] && (
             <td
               className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-sky-50/20 whitespace-nowrap ${
                 useMerge && isLast ? 'border-b-2 border-b-slate-400' : ''
@@ -2634,21 +4069,21 @@ function renderSpreadsheetRows(
             </td>
           )}
 
-          {/* COLUMNS AO TO AS: DELIVERED WHATSAPP & EMAILS (VERTICALLY MERGED PER ORDER) */}
+          {/* COLUMNS AN TO AQ: DELIVERED WHATSAPP & EMAILS (VERTICALLY MERGED PER ORDER) */}
           {showHeaderCols && (
             <>
-              {/* Col AO: Delivered Whatspp Msg */}
-              {visibleCols['AO'] && (
+              {/* Col AN: Delivered Whatspp Msg (WhatsApp Sent) */}
+              {visibleCols['AN'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-purple-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
                   <select
-                    value={handlers.aoStatuses[currentOrderKey] || 'Pending'}
+                    value={handlers.anStatuses[currentOrderKey] || 'Pending'}
                     onChange={(e) => {
                       const val = e.target.value;
-                      handlers.setAoStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
-                      handlers.setSyncFeedback(`Col AO set to "${val}". ${val === 'Message Sent' ? 'WhatsApp button activated in Col AP!' : 'Pending status.'}`);
+                      handlers.setAnStatuses(prev => ({ ...prev, [currentOrderKey]: val }));
+                      handlers.setSyncFeedback(`Col AN set to "${val}". ${val === 'Message Sent' ? 'WhatsApp button activated in Col AO!' : 'Pending status.'}`);
                       setTimeout(() => handlers.setSyncFeedback(null), 3500);
                     }}
                     className="text-[10px] bg-white border border-purple-300 rounded px-1.5 py-0.5 font-medium text-slate-800 focus:ring-1 focus:ring-purple-500 focus:outline-none h-6"
@@ -2659,42 +4094,45 @@ function renderSpreadsheetRows(
                 </td>
               )}
 
-              {/* Col AP: Whatspp Link */}
-              {visibleCols['AP'] && (
+              {/* Col AO: Whatspp Link (Dispatch WhatsApp) */}
+              {visibleCols['AO'] && (
                 <td
                   rowSpan={rowSpan}
                   className={`px-1.5 py-0.5 border-r border-slate-300 text-center align-middle bg-emerald-50/20 whitespace-nowrap ${cellBottomBorder}`}
                 >
-                  {(handlers.aoStatuses[currentOrderKey] || 'Pending') === 'Message Sent' ? (
-                    <button
-                      onClick={() => handlers.onOpenWhatsAppModal(order)}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
-                      title="Send WhatsApp Dispatch Notice"
-                    >
-                      <MessageSquare className="w-3 h-3" />
-                      <span>Send WA</span>
-                      <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
-                    </button>
-                  ) : (
-                    <span className="text-slate-400 font-mono text-[10px] italic">—</span>
-                  )}
+                  <button
+                    onClick={() => handlers.onOpenWhatsAppModal(order)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-2xs"
+                    title="Send WhatsApp Dispatch Notice"
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    <span>Send WA</span>
+                    <ExternalLink className="w-2.5 h-2.5 ml-0.5" />
+                  </button>
                 </td>
               )}
 
-              {/* COLUMNS AQ TO AS IF VISIBLE */}
-              {visibleCols['AQ'] && (
+              {/* Col AP: Delivery Email */}
+              {visibleCols['AP'] && (
                 <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-slate-600 align-middle text-[10px] ${cellBottomBorder}`}>
-                  {order.customerEmail || '—'}
+                  {order.customerMailId || order.customerEmail || '—'}
                 </td>
               )}
-              {visibleCols['AR'] && (
+
+              {/* Col AQ: Delivery Email Link */}
+              {visibleCols['AQ'] && (
                 <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-blue-600 align-middle text-center text-[10px] ${cellBottomBorder}`}>
-                  <span className="underline cursor-pointer">Email</span>
-                </td>
-              )}
-              {visibleCols['AS'] && (
-                <td rowSpan={rowSpan} className={`px-2 py-0.5 sm:py-1 border-r border-slate-300 text-emerald-700 align-middle text-center text-[10px] ${cellBottomBorder}`}>
-                  Sent
+                  {order.customerMailId || order.customerEmail ? (
+                    <a
+                      href={`mailto:${order.customerMailId || order.customerEmail}?subject=Dispatch%20Details%20Order%20${encodeURIComponent(order.orderNo || '')}&body=Dear%20Customer,%0A%0AYour%20order%20has%20been%20dispatched.`}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-blue-600 hover:text-blue-800 hover:underline"
+                    >
+                      <span>Send Email</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  ) : (
+                    <span className="text-slate-400 italic">—</span>
+                  )}
                 </td>
               )}
             </>

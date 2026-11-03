@@ -29,17 +29,18 @@ import {
 } from '../utils/gasGenerator';
 
 export const FirebaseSyncHub: React.FC = () => {
-  const [firebaseUrl, setFirebaseUrl] = useState("https://ginza-fms-default-rtdb.firebaseio.com");
-  const [firebaseSecret, setFirebaseSecret] = useState("");
+  const [firebaseUrl, setFirebaseUrl] = useState("https://project-vishal-team-default-rtdb.firebaseio.com");
+  const [firebaseSecret, setFirebaseSecret] = useState("iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J");
   const [activeTabName, setActiveTabName] = useState("Product Automation");
   const [closedTabName, setClosedTabName] = useState("Closed Orders");
-  const [spreadsheetId, setSpreadsheetId] = useState("14cIoLK1Z8Ihj1DakVtHvk-QPrCfJzQu2hco26MBHiYk");
+  const [spreadsheetId, setSpreadsheetId] = useState("1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q");
   const [activeView, setActiveView] = useState<'script' | 'schema' | 'rules' | 'steps'>('script');
 
   const [copiedScript, setCopiedScript] = useState(false);
   const [copiedSchema, setCopiedSchema] = useState(false);
   const [copiedRules, setCopiedRules] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [ruleFormat, setRuleFormat] = useState<'rtdb' | 'firestore'>('rtdb');
 
   const config: GasScriptConfig = useMemo(() => ({
     ...defaultGasConfig,
@@ -74,6 +75,31 @@ export const FirebaseSyncHub: React.FC = () => {
   }
 }`;
 
+  const firestoreRulesText = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Active orders collection (Product Automation)
+    match /product_automation/{orderId} {
+      allow read, write: if true; // or: if request.auth != null;
+    }
+
+    // 2. Closed / Archived orders collection
+    match /closed_orders/{orderId} {
+      allow read, write: if true; // or: if request.auth != null;
+    }
+
+    // 3. Connection health test
+    match /_connection_test/{docId} {
+      allow read, write: if true;
+    }
+
+    // Default catch-all
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}`;
+
   const handleCopyScript = () => {
     navigator.clipboard.writeText(generatedScript).then(() => {
       setCopiedScript(true);
@@ -89,7 +115,8 @@ export const FirebaseSyncHub: React.FC = () => {
   };
 
   const handleCopyRules = () => {
-    navigator.clipboard.writeText(databaseRulesJson).then(() => {
+    const textToCopy = ruleFormat === 'rtdb' ? databaseRulesJson : firestoreRulesText;
+    navigator.clipboard.writeText(textToCopy).then(() => {
       setCopiedRules(true);
       setTimeout(() => setCopiedRules(false), 2500);
     });
@@ -417,16 +444,94 @@ export const FirebaseSyncHub: React.FC = () => {
 
         {/* View 3: Security Rules */}
         {activeView === 'rules' && (
-          <div className="space-y-3">
-            <div className="text-xs text-slate-600 leading-relaxed">
-              Firebase Console &gt; Realtime Database &gt; <strong>Rules</strong> tab me ye rules paste karein:
+          <div className="space-y-4">
+            {/* Error Fix Alert Banner */}
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-rose-900">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>&quot;Line 1: mismatched input &apos;&#123;&apos; expecting &#123;&apos;function&apos;...&quot; Error Kyo Aaya?</span>
+              </div>
+              <p className="text-rose-800 leading-relaxed text-[11px]">
+                Firebase me <strong>2 alag databases</strong> hote hain: <strong>Realtime Database</strong> aur <strong>Cloud Firestore</strong>.
+                Aap JSON rules (<code>&#123;&quot;rules&quot;: ...&#125;</code>) ko <strong>Firestore Database</strong> ke Rules tab me paste kar rahe hain!
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-1">
+                <div className="p-2.5 bg-white rounded-lg border border-rose-200">
+                  <span className="font-bold text-emerald-800 block mb-0.5">Option 1: Realtime Database (Recommended)</span>
+                  <p className="text-[10px] text-slate-600">
+                    Console me Left menu &gt; <strong>Build</strong> &gt; <strong>Realtime Database</strong> par click karein. Wahan ke <strong>Rules</strong> tab me JSON paste karein.
+                  </p>
+                </div>
+                <div className="p-2.5 bg-white rounded-lg border border-rose-200">
+                  <span className="font-bold text-amber-800 block mb-0.5">Option 2: Cloud Firestore</span>
+                  <p className="text-[10px] text-slate-600">
+                    Agar aapne <strong>Firestore</strong> create kiya hai, to neeche "Cloud Firestore Rules" tab select karein aur woh syntax copy karein.
+                  </p>
+                </div>
+              </div>
             </div>
-            <pre className="bg-slate-900 text-emerald-300 font-mono text-xs p-4 rounded-lg overflow-x-auto max-h-[400px] leading-relaxed border border-slate-800">
-              {databaseRulesJson}
-            </pre>
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600">
-              <strong>Testing Tip:</strong> Agar aap shuruaat me testing kar rahe hain aur Database Secret use nahi karna chahte, to Rules me <code>".read": true, ".write": true</code> karke test kar sakte hain. Production ke liye Secret ya Auth use karein.
+
+            {/* Database Selector Buttons */}
+            <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+              <button
+                type="button"
+                onClick={() => setRuleFormat('rtdb')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  ruleFormat === 'rtdb'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>Realtime Database Rules (JSON)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRuleFormat('firestore')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  ruleFormat === 'firestore'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>Cloud Firestore Rules (CEL)</span>
+              </button>
             </div>
+
+            {ruleFormat === 'rtdb' ? (
+              <div className="space-y-2">
+                <div className="text-xs text-slate-600 leading-relaxed flex items-center justify-between">
+                  <span>
+                    Firebase Console &gt; Build &gt; <strong>Realtime Database</strong> &gt; <strong>Rules</strong> tab me ye paste karein:
+                  </span>
+                  <span className="text-[11px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                    Format: JSON
+                  </span>
+                </div>
+                <pre className="bg-slate-900 text-emerald-300 font-mono text-xs p-4 rounded-lg overflow-x-auto max-h-[400px] leading-relaxed border border-slate-800">
+                  {databaseRulesJson}
+                </pre>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-600">
+                  <strong>Testing Tip:</strong> Test mode ke liye aap rules me <code>{`".read": true, ".write": true`}</code> bhi rakh sakte hain. Database Secret (<code>{firebaseSecret || 'iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J'}</code>) lagane par <code>auth != null</code> completely secure rehta hai.
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-xs text-slate-600 leading-relaxed flex items-center justify-between">
+                  <span>
+                    Firebase Console &gt; Build &gt; <strong>Firestore Database</strong> &gt; <strong>Rules</strong> tab me ye paste karein:
+                  </span>
+                  <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
+                    Format: Firestore CEL Syntax
+                  </span>
+                </div>
+                <pre className="bg-slate-900 text-amber-300 font-mono text-xs p-4 rounded-lg overflow-x-auto max-h-[400px] leading-relaxed border border-slate-800">
+                  {firestoreRulesText}
+                </pre>
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-900">
+                  <strong>Firestore Notice:</strong> Yeh syntax Firestore ke <code>mismatched input</code> error ko solve kar deta hai. Isme <code>product_automation</code> aur <code>closed_orders</code> collections ke liye read/write permissions set hain.
+                </div>
+              </div>
+            )}
           </div>
         )}
 

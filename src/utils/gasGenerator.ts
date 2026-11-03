@@ -18,20 +18,20 @@ export interface GasScriptConfig {
 
 export const defaultGasConfig: GasScriptConfig = {
   mode: 'delta-bigdata',
-  spreadsheetId: "14cIoLK1Z8Ihj1DakVtHvk-QPrCfJzQu2hco26MBHiYk",
+  spreadsheetId: "1xSSZ6DyQarQJOd8UpOfCV-tjdKL1oQq_IKuXJkcRv5Q",
   sourceSheetName: "Product Order",
   targetSheetName: "Product Automation",
   archiveSheetName: "Closed Orders",
   supabaseUrl: "https://anlwvumnbppnkkmyvljp.supabase.co",
   supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFubHd2dW1uYnBwbmtrbXl2bGpwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI1NjU4MDksImV4cCI6MjEwODE0MTgwOX0.PhSQNL3VzaocG7TSYRqmBcvH0cvXH9--INo82QqYvV4",
-  firebaseUrl: "https://ginza-fms-default-rtdb.firebaseio.com",
-  firebaseSecret: "",
+  firebaseUrl: "https://project-vishal-team-default-rtdb.firebaseio.com",
+  firebaseSecret: "iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J",
   useFormulaForBalance: true,
   preserveDispatchData: true,
   verticalAlignment: "middle",
   applyBordersAndStyles: true,
-  orderNoColSource: 27,
-  orderNoColTarget: 24
+  orderNoColSource: 19,
+  orderNoColTarget: 19
 };
 
 /**
@@ -2321,14 +2321,14 @@ function onEdit(e) {
 export function generateFirebaseSyncCode(config: GasScriptConfig = defaultGasConfig): string {
   const rawUrl = config.firebaseUrl || "https://your-project-id-default-rtdb.firebaseio.com";
   const fbUrl = rawUrl.endsWith("/") ? rawUrl.slice(0, -1) : rawUrl;
-  const fbSecret = config.firebaseSecret || "";
+  const fbSecret = config.firebaseSecret || "iIElINFgR124ssaG3QWjExz2lT72cRh5g502oP6J";
 
   return `/**
  * ============================================================================
  * GINZA FMS - FIREBASE REAL-TIME CLOUD SYNC & ARCHIVE ENGINE
  * 
- * Target Tab  : "\${config.targetSheetName}" (Open Orders - 45 Columns)
- * Archive Tab : "\${config.archiveSheetName}" (Closed Orders)
+ * Target Tab  : "${config.targetSheetName}" (Open Orders - 45 Columns)
+ * Archive Tab : "${config.archiveSheetName}" (Closed Orders)
  * 
  * FIREBASE COLLECTIONS / TABLES:
  * 1. "/product_automation" -> Stores all active open orders with full item lists & approvals
@@ -2360,21 +2360,21 @@ export function generateFirebaseSyncCode(config: GasScriptConfig = defaultGasCon
 
 const FIREBASE_CONFIG = {
   // 1. Firebase Realtime Database URL (without trailing slash)
-  DATABASE_URL: "\${fbUrl}",
+  DATABASE_URL: "${fbUrl}",
 
   // 2. Database Secret or Auth Token (from Firebase Console > Project Settings > Service Accounts > Database Secrets)
-  DATABASE_SECRET: "\${fbSecret}",
+  DATABASE_SECRET: "${fbSecret}",
 
   // 3. Tab Names to Sync
-  AUTOMATION_TAB: "\${config.targetSheetName}",
-  CLOSED_TAB: "\${config.archiveSheetName}",
+  AUTOMATION_TAB: "${config.targetSheetName}",
+  CLOSED_TAB: "${config.archiveSheetName}",
 
   // 4. Batch Chunk Size (100 orders per single HTTP call)
   BATCH_SIZE: 100,
 
   // 5. Column Indices (1-indexed)
   FIRST_DATA_ROW: 2,
-  ORDER_NO_COL: \${config.orderNoColTarget}, // 24 (Col X)
+  ORDER_NO_COL: ${config.orderNoColTarget || 24}, // 24 (Col X)
   DISPATCH_COL: 25,         // Col Y
   BALANCE_COL: 26,          // Col Z
   STATUS_COL: 40,           // Col AN
